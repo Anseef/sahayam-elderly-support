@@ -8,7 +8,7 @@ const RegisterScreen = ({ navigation }) => {
     const [password, setPassword] = useState('');
     const [role, setRole] = useState('elderly');
     const [aadhaar, setAadhaar] = useState('');
-    const [location, setLocation] = useState(''); // Simple string for now
+    const [location, setLocation] = useState('');
 
     const handleRegister = () => {
         register(name, mobile, password, role, aadhaar, { address: location });

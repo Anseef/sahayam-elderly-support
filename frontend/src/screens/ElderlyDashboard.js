@@ -5,65 +5,80 @@ import {
   StyleSheet, 
   ScrollView, 
   TouchableOpacity, 
-  FlatList 
+  Dimensions 
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons, FontAwesome5 } from '@expo/vector-icons'; // Standard Expo Icons
+import { Ionicons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
+
+const { width } = Dimensions.get('window');
 
 export default function ElderlyDashboard({navigation}) {
   
-  // Dummy Data for Active Tasks (Non-completed)
   const [activeTasks, setActiveTasks] = useState([
     { id: '1', title: 'Grocery Run', date: 'Today, 10:00 AM', status: 'Pending', location: 'Lulu Mall' },
-    { id: '2', title: 'Hospital Visit', date: 'Tomorrow, 09:00 AM', status: 'Accepted', location: 'General Hospital' },
+    { id: '2', title: 'Hospital Visit', date: 'Tomorrow, 09:00 AM', status: 'Accepted', volunteer: 'Sam', location: 'General Hospital' },
   ]);
 
-  // Dummy Data for Completed Tasks
   const [completedTasks, setCompletedTasks] = useState([
     { id: '3', title: 'Medicine Pickup', date: 'Yesterday', status: 'Completed', volunteer: 'Arun K.' },
     { id: '4', title: 'Utility Bill Payment', date: '08 Jan 2026', status: 'Completed', volunteer: 'Sneha R.' },
   ]);
 
-  // Render a single task card
-  const renderTaskCard = ({ item, isCompleted }) => (
-    <TouchableOpacity 
-    activeOpacity={0.9}
-    onPress={() => navigation.navigate('ServiceDetail', { task: item })}
-    >
+  const getStatusColor = (status, isCompleted) => {
+    if (status === 'Pending') return { bg: '#FFF3E0', text: '#EF6C00', dot: '#EF6C00' };
+    if (isCompleted) return { bg: '#E8F5E9', text: '#2E7D32', dot: '#2E7D32' };
+    return { bg: '#E0F2FE', text: '#0284C7', dot: '#0284C7' }; // Accepted
+  };
+
+  const renderTaskCard = ({ item, isCompleted }) => {
+    const statusColors = getStatusColor(item.status, isCompleted);
+
+    return (
+      <TouchableOpacity 
+        activeOpacity={0.9}
+        onPress={() => navigation.navigate('ServiceDetail', { task: item })}
+        style={styles.cardContainer}
+      >
         <View style={[styles.card, isCompleted && styles.completedCard]}>
-        <View style={styles.cardHeader}>
-            <View style={styles.iconContainer}>
-            <FontAwesome5 
+          
+          {/* Card Top: Icon & Title */}
+          <View style={styles.cardHeader}>
+            <View style={[styles.iconBox, isCompleted && styles.iconBoxCompleted]}>
+              <FontAwesome5 
                 name={item.title.includes("Hospital") ? "hospital" : "shopping-basket"} 
-                size={20} 
-                color={isCompleted ? "#78909C" : "#007EA7"} 
-            />
+                size={22} 
+                color={isCompleted ? "#94A3B8" : "#007EA7"} 
+              />
             </View>
-            <View style={styles.cardContent}>
-            <Text style={[styles.taskTitle, isCompleted && styles.completedText]}>{item.title}</Text>
-            <Text style={styles.taskDate}>{item.date}</Text>
+            
+            <View style={styles.cardTextContent}>
+              <Text style={[styles.taskTitle, isCompleted && styles.textCompleted]}>{item.title}</Text>
+              <Text style={styles.taskDate}>{item.date}</Text>
             </View>
-            <View style={[
-            styles.statusBadge, 
-            { backgroundColor: item.status === 'Pending' ? '#FFF3E0' : (isCompleted ? '#E8F5E9' : '#E3F2FD') }
-            ]}>
-            <Text style={[
-                styles.statusText, 
-                { color: item.status === 'Pending' ? '#EF6C00' : (isCompleted ? '#2E7D32' : '#1565C0') }
-            ]}>
+
+            {/* Status Pill */}
+            <View style={[styles.statusPill, { backgroundColor: statusColors.bg }]}>
+              <View style={[styles.statusDot, { backgroundColor: statusColors.dot }]} />
+              <Text style={[styles.statusText, { color: statusColors.text }]}>
                 {item.status}
-            </Text>
+              </Text>
             </View>
-        </View>
-        {!isCompleted && (
-            <View style={styles.locationRow}>
-            <Ionicons name="location-outline" size={14} color="#546E7A" />
-            <Text style={styles.locationText}>{item.location}</Text>
+          </View>
+
+          {/* Card Bottom: Location (If Active) */}
+          {!isCompleted && (
+            <View style={styles.cardFooter}>
+              <View style={styles.locationBadge}>
+                <Ionicons name="location-sharp" size={14} color="#64748B" />
+                <Text style={styles.locationText} numberOfLines={1}>{item.location}</Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color="#CBD5E1" />
             </View>
-        )}
+          )}
         </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -71,27 +86,23 @@ export default function ElderlyDashboard({navigation}) {
       {/* --- HEADER --- */}
       <View style={styles.header}>
         <View style={styles.addressSection}>
-            
-            {/* Wrap this part in TouchableOpacity */}
-            <TouchableOpacity 
-            style={styles.addressTitleRow} 
-            onPress={() => navigation.navigate('LocationSelectScreen')}
+            <TouchableOpacity
+              style={styles.addressTitleRow}
+              onPress={() => navigation.navigate('LocationSelectScreen')}
             >
-            <Ionicons name="home" size={18} color="#007EA7" />
-            <Text style={styles.addressLabel}>Home</Text>
-            <Ionicons name="chevron-down" size={16} color="#546E7A" />
+              <Ionicons name="home" size={18} color="#007EA7" />
+              <Text style={styles.addressLabel}>Home</Text>
+              <Ionicons name="chevron-down" size={16} color="#546E7A" />
             </TouchableOpacity>
-
             <Text style={styles.addressText} numberOfLines={1}>
-            Pathanamthitta, Kerala, India
+              Pathanamthitta, Kerala, India
             </Text>
         </View>
-                
-        <TouchableOpacity 
+        <TouchableOpacity
             style={styles.profileButton}
             onPress={() => navigation.navigate('ElderProfile')}
         >
-          <Ionicons name="person-circle-outline" size={32} color="#007EA7" />
+          <Ionicons name="person" size={32} color="#007EA7" />
         </TouchableOpacity>
       </View>
 
@@ -103,30 +114,35 @@ export default function ElderlyDashboard({navigation}) {
           {activeTasks.length > 0 ? (
             activeTasks.map(task => <View key={task.id}>{renderTaskCard({ item: task, isCompleted: false })}</View>)
           ) : (
-            <Text style={styles.emptyText}>No active requests.</Text>
+            <View style={styles.emptyState}>
+              <Ionicons name="checkmark-circle-outline" size={40} color="#CBD5E1" />
+              <Text style={styles.emptyText}>No active requests right now.</Text>
+            </View>
           )}
         </View>
 
         {/* --- SECTION 2: HISTORY --- */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Past History</Text>
+          <Text style={styles.sectionTitle}>Recent History</Text>
           {completedTasks.length > 0 ? (
             completedTasks.map(task => <View key={task.id}>{renderTaskCard({ item: task, isCompleted: true })}</View>)
           ) : (
-            <Text style={styles.emptyText}>No history available.</Text>
+            <View style={styles.emptyState}>
+               <Ionicons name="time-outline" size={40} color="#CBD5E1" />
+               <Text style={styles.emptyText}>No history available.</Text>
+            </View>
           )}
         </View>
         
-        {/* Spacer for FAB */}
-        <View style={{ height: 80 }} />
+        <View style={{ height: 100 }} />
 
       </ScrollView>
 
-      {/* --- FAB: ADD BUTTON --- */}
+      {/* --- FAB --- */}
       <TouchableOpacity 
         style={styles.fab} 
-        activeOpacity={0.8}
-        onPress={() => alert("Navigate to 'Add Request' Screen")}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate('AddServiceScreen')}
       >
         <Ionicons name="add" size={32} color="#FFFFFF" />
       </TouchableOpacity>
@@ -138,14 +154,14 @@ export default function ElderlyDashboard({navigation}) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F4F8FB",
+    backgroundColor: "#F8FAFC",
   },
   scrollContent: {
     padding: 20,
   },
   
-  // Header Styles
-  header: {
+  // Header
+ header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -174,109 +190,149 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#546E7A",
   },
-  profileButton: {
-    padding: 4,
+  profileBtn: {
+    width: 30,
+    height: 30,
+    backgroundColor: "#E0F2FE",
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
   },
-
-  // Section Styles
+  // Sections
   section: {
-    marginTop: 20,
+    marginBottom: 24,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "800",
-    color: "#0A1E29",
-    marginBottom: 15,
+    color: "#1E293B",
+    marginBottom: 16,
+    marginLeft: 4,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 30,
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
   },
   emptyText: {
-    color: "#90A4AE",
-    fontStyle: "italic",
+    marginTop: 8,
+    color: "#94A3B8",
+    fontSize: 14,
   },
 
-  // Card Styles
+  // Cards
+  cardContainer: {
+    marginBottom: 14,
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
+  },
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-    borderLeftWidth: 4,
-    borderLeftColor: "#007EA7",
   },
   completedCard: {
-    backgroundColor: "#F9FAFB",
-    borderLeftColor: "#CFD8DC",
+    backgroundColor: "#FCFCFC",
+    opacity: 0.9,
   },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
   },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#E0F7FA",
+  iconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#E0F2FE",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
+    marginRight: 14,
   },
-  cardContent: {
+  iconBoxCompleted: {
+    backgroundColor: "#F1F5F9",
+  },
+  cardTextContent: {
     flex: 1,
   },
   taskTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#0A1E29",
+    color: "#0F172A",
+    marginBottom: 4,
   },
-  completedText: {
-    color: "#78909C",
-    textDecorationLine: "line-through",
+  textCompleted: {
+    color: "#64748B",
+    textDecorationLine: 'line-through',
   },
   taskDate: {
-    fontSize: 12,
-    color: "#78909C",
-    marginTop: 2,
+    fontSize: 13,
+    color: "#64748B",
+    fontWeight: "500",
   },
-  statusBadge: {
+  
+  // Status Pill
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 6,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   statusText: {
     fontSize: 11,
     fontWeight: "700",
   },
-  locationRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginLeft: 52, // Align with text
+
+  // Card Footer
+  cardFooter: {
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  locationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
   },
   locationText: {
-    fontSize: 12,
-    color: "#546E7A",
+    fontSize: 13,
+    color: "#64748B",
+    fontWeight: "500",
   },
 
-  // FAB Styles
+  // FAB
   fab: {
     position: "absolute",
     bottom: 30,
     right: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: "#007EA7",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#007EA7",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
   },
 });

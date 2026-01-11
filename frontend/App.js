@@ -11,6 +11,8 @@ import LocationSelectScreen from './src/screens/LocationSelectScreen';
 import EmergencyHelpScreen from './src/screens/EmergencyHelpScreen';
 import ServiceDetailScreen from './src/screens/ServiceDetailScreen';
 import ElderlyProfile from './src/screens/ElderlyProfile';
+import EditElderlyProfile from './src/screens/EditElderlyProfile';
+import AddServiceScreen from './src/screens/AddServiceScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -73,7 +75,8 @@ export default function App() {
         <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name='ServiceDetail' component={ServiceDetailScreen}/>
         <Stack.Screen name="ElderProfile" component={ElderlyProfile} />
-        
+        <Stack.Screen name="EditElderlyProfile" component={EditElderlyProfile} />
+        <Stack.Screen name='AddServiceScreen' component={AddServiceScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
