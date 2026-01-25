@@ -8,29 +8,63 @@ import {
   TouchableOpacity,
   Alert,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Import Storage
 
 export default function EditElderlyProfile({ route, navigation }) {
   const { currentUser, onSave } = route.params;
   const [formData, setFormData] = useState(currentUser);
+  const [saving, setSaving] = useState(false); // Loading state
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    // 1. Validation
     if (!formData.name || !formData.phone) {
       Alert.alert("Error", "Name and Phone are required.");
       return;
     }
 
-    onSave(formData);
-    
-    Alert.alert("Success", "Profile updated successfully!");
-    navigation.goBack();
+    setSaving(true);
+
+    try {
+      // 2. Get User ID
+      const storedUser = await AsyncStorage.getItem('user');
+      if (!storedUser) return;
+      const parsedUser = JSON.parse(storedUser);
+
+      // 3. Send Data to Backend
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/update/${parsedUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData), // Send the form data
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // 4. Update Previous Screen & Go Back
+        onSave(formData); 
+        Alert.alert("Success", "Profile updated successfully!");
+        navigation.goBack();
+      } else {
+        Alert.alert("Error", data.message || "Failed to update profile.");
+      }
+
+    } catch (error) {
+      console.error("Update Error:", error);
+      Alert.alert("Network Error", "Could not connect to server.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -41,8 +75,12 @@ export default function EditElderlyProfile({ route, navigation }) {
           <Ionicons name="close" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Edit Profile</Text>
-        <TouchableOpacity onPress={handleSave}>
-          <Text style={styles.saveBtn}>Save</Text>
+        <TouchableOpacity onPress={handleSave} disabled={saving}>
+          {saving ? (
+            <ActivityIndicator size="small" color="#007EA7" />
+          ) : (
+            <Text style={styles.saveBtn}>Save</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -53,6 +91,7 @@ export default function EditElderlyProfile({ route, navigation }) {
           <InputField label="Full Name" value={formData.name} onChangeText={(t) => handleChange('name', t)} />
           <InputField label="Phone Number" value={formData.phone} onChangeText={(t) => handleChange('phone', t)} keyboardType="phone-pad" />
           <InputField label="Address" value={formData.address} onChangeText={(t) => handleChange('address', t)} multiline />
+          <InputField label="City / Location" value={formData.location} onChangeText={(t) => handleChange('location', t)} placeholder="e.g. Pathanamthitta"/>
           <InputField label="Aadhaar Number" value={formData.aadhaar} onChangeText={(t) => handleChange('aadhaar', t)} keyboardType="numeric" />
 
           <Text style={styles.sectionLabel}>MEDICAL INFO</Text>
@@ -62,8 +101,16 @@ export default function EditElderlyProfile({ route, navigation }) {
           <Text style={styles.sectionLabel}>EMERGENCY CONTACT</Text>
           <InputField label="Guardian Name & Phone" value={formData.guardian} onChangeText={(t) => handleChange('guardian', t)} />
 
-          <TouchableOpacity style={styles.saveButtonMain} onPress={handleSave}>
-            <Text style={styles.saveButtonText}>Save Changes</Text>
+          <TouchableOpacity 
+            style={[styles.saveButtonMain, saving && {opacity: 0.7}]} 
+            onPress={handleSave}
+            disabled={saving}
+          >
+            {saving ? (
+               <ActivityIndicator color="#fff" />
+            ) : (
+               <Text style={styles.saveButtonText}>Save Changes</Text>
+            )}
           </TouchableOpacity>
 
         </ScrollView>

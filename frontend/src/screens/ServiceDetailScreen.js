@@ -13,27 +13,56 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, MaterialIcons } from '@expo/vector-icons';
+import { Audio } from 'expo-av'; // Import Audio for playing voice notes
 
 const { width } = Dimensions.get('window');
 
 export default function ServiceDetailScreen({ route, navigation }) {
 
-  const { task } = route.params || { 
-    task: { 
-      title: "Grocery Run", 
-      date: "Today, 10:00 AM", 
-      status: "Pending", 
-      volunteer: null, 
-      location: "Lulu Mall, Pathanamthitta" 
-    } 
-  };
+  // 1. Safe Destructuring of Params
+  const { task } = route.params || {};
+
+  // If no task is found (direct navigation error), show a fallback or go back
+  if (!task) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centerContent}>
+          <Text>No task details found.</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.primaryBtn}>
+            <Text style={styles.primaryBtnText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [complaintText, setComplaintText] = useState('');
   const [showComplaintBox, setShowComplaintBox] = useState(false);
+  const [sound, setSound] = useState(null); // Sound state
+
+  // --- PLAY VOICE NOTE ---
+  const playVoiceNote = async () => {
+    if (!task.voiceNote) return;
+    try {
+      // Unload any existing sound
+      if (sound) {
+        await sound.unloadAsync();
+      }
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: task.voiceNote },
+        { shouldPlay: true }
+      );
+      setSound(newSound);
+    } catch (error) {
+      Alert.alert("Playback Error", "Could not play the voice note.");
+    }
+  };
 
   const handleEdit = () => {
+    // In a real app, you might pass the ID to fetch fresh data
+    // For now, we just pass the object back to the Add screen
     navigation.navigate('AddServiceScreen', { existingTask: task });
   };
 
@@ -46,7 +75,9 @@ export default function ServiceDetailScreen({ route, navigation }) {
         { 
           text: "Yes, Cancel", 
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            // TODO: Call Backend API to delete/cancel request here
+            // await fetch(`.../api/requests/cancel/${task._id}`, { method: 'POST' })
             Alert.alert("Request Cancelled", "The service request has been removed.");
             navigation.goBack();
           } 
@@ -60,6 +91,7 @@ export default function ServiceDetailScreen({ route, navigation }) {
       Alert.alert("Rating Required", "Please tap a star to rate the service.");
       return;
     }
+    // TODO: Send review to backend
     Alert.alert("Thank You!", "Your feedback helps us improve.");
     navigation.goBack();
   };
@@ -68,6 +100,7 @@ export default function ServiceDetailScreen({ route, navigation }) {
     Alert.alert("Report Issue", "Are you sure you want to file a complaint?", [
       { text: "Cancel", style: "cancel" },
       { text: "Yes, Report", style: 'destructive', onPress: () => {
+          // TODO: Send complaint to backend
           Alert.alert("Complaint Filed", "Support will contact you.");
           navigation.goBack();
       }}
@@ -83,6 +116,16 @@ export default function ServiceDetailScreen({ route, navigation }) {
     }
   };
   const statusColors = getStatusColor(task.status);
+
+  // --- DISPLAY HELPERS ---
+  // Use 'category' as the main title if 'title' is missing
+  const displayTitle = task.title || task.category || "Service Request";
+  
+  // Use 'dateTime' (user typed) or format 'createdAt'
+  const displayDate = task.dateTime || new Date(task.createdAt).toLocaleString();
+
+  // Handle Location
+  const displayLocation = task.location || "Location provided in Voice Note";
 
   return (
     <SafeAreaView style={styles.container}>
@@ -113,38 +156,64 @@ export default function ServiceDetailScreen({ route, navigation }) {
                 <View style={[styles.statusDot, { backgroundColor: statusColors.text }]} />
                 <Text style={[styles.statusText, { color: statusColors.text }]}>{task.status}</Text>
               </View>
+              {/* Show Paid Badge if applicable */}
+              {task.isPaid && (
+                 <View style={styles.paidBadge}>
+                   <Text style={styles.paidText}>₹{task.paymentAmount}</Text>
+                 </View>
+              )}
             </View>
             
-            <Text style={styles.title}>{task.title}</Text>
+            <Text style={styles.title}>{displayTitle}</Text>
             
             <View style={styles.metaContainer}>
               <View style={styles.metaRow}>
                 <View style={styles.metaIconBox}>
                   <Ionicons name="calendar-outline" size={18} color="#546E7A" />
                 </View>
-                <Text style={styles.metaText}>{task.date}</Text>
+                <Text style={styles.metaText}>{displayDate}</Text>
               </View>
               
               <View style={styles.metaRow}>
                 <View style={styles.metaIconBox}>
                   <Ionicons name="location-outline" size={18} color="#546E7A" />
                 </View>
-                <Text style={styles.metaText} numberOfLines={2}>{task.location}</Text>
+                <Text style={styles.metaText} numberOfLines={2}>{displayLocation}</Text>
               </View>
+
+              {/* NOTES SECTION */}
+              {task.notes && (
+                <View style={styles.notesBox}>
+                    <Text style={styles.notesLabel}>Notes:</Text>
+                    <Text style={styles.notesText}>{task.notes}</Text>
+                </View>
+              )}
+
+              {/* VOICE NOTE PLAYER */}
+              {task.voiceNote && (
+                 <TouchableOpacity style={styles.voicePlayer} onPress={playVoiceNote}>
+                    <Ionicons name="play-circle" size={32} color="#007EA7" />
+                    <View>
+                        <Text style={styles.voiceTitle}>Voice Note Attached</Text>
+                        <Text style={styles.voiceSub}>Tap to listen to instructions</Text>
+                    </View>
+                 </TouchableOpacity>
+              )}
+
             </View>
           </View>
 
           {/* --- VOLUNTEER SECTION --- */}
           <Text style={styles.sectionLabel}>ASSIGNED VOLUNTEER</Text>
           
-          {(task.status === 'Accepted' || task.status === 'Completed') && task.volunteer ? (
+          {(task.status === 'Accepted' || task.status === 'Completed') && task.volunteerName ? (
             <View style={styles.volunteerCard}>
               <View style={styles.volunteerLeft}>
                 <View style={styles.avatar}>
-                  <Text style={styles.avatarLetter}>{task.volunteer.charAt(0)}</Text>
+                  <Text style={styles.avatarLetter}>{task.volunteerName.charAt(0)}</Text>
                 </View>
                 <View style={styles.volunteerDetails}>
-                  <Text style={styles.volunteerName}>{task.volunteer}</Text>
+                  <Text style={styles.volunteerName}>{task.volunteerName}</Text>
                   <View style={styles.verifiedTag}>
                     <MaterialIcons name="verified" size={14} color="#007EA7" />
                     <Text style={styles.verifiedText}>Verified Helper</Text>
@@ -152,7 +221,7 @@ export default function ServiceDetailScreen({ route, navigation }) {
                 </View>
               </View>
               
-              <TouchableOpacity style={styles.callBtn} onPress={() => Alert.alert("Calling", `Dialing ${task.volunteer}...`)}>
+              <TouchableOpacity style={styles.callBtn} onPress={() => Alert.alert("Calling", `Dialing volunteer...`)}>
                 <Ionicons name="call" size={22} color="#FFF" />
               </TouchableOpacity>
             </View>
@@ -250,6 +319,8 @@ export default function ServiceDetailScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   
+  centerContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#FFF',
@@ -266,15 +337,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF', borderRadius: 24, padding: 24, marginBottom: 24,
     shadowColor: '#64748B', shadowOpacity: 0.08, shadowOffset: {width: 0, height: 4}, shadowRadius: 12, elevation: 4
   },
-  heroHeader: { flexDirection: 'row', justifyContent: 'flex-start', marginBottom: 12 },
+  heroHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
   statusPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, gap: 6 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusText: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  paidBadge: { backgroundColor: '#DCFCE7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  paidText: { color: '#166534', fontWeight: '700', fontSize: 13 },
+
   title: { fontSize: 24, fontWeight: '800', color: '#0F172A', marginBottom: 20, lineHeight: 32 },
   metaContainer: { gap: 12 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   metaIconBox: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
   metaText: { fontSize: 15, color: '#475569', flex: 1, lineHeight: 20 },
+
+  notesBox: { marginTop: 12, backgroundColor: '#F8FAFC', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#F1F5F9' },
+  notesLabel: { fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 4 },
+  notesText: { fontSize: 14, color: '#334155', fontStyle: 'italic' },
+
+  voicePlayer: { flexDirection: 'row', alignItems: 'center', marginTop: 16, backgroundColor: '#E0F2FE', padding: 12, borderRadius: 16, gap: 12 },
+  voiceTitle: { fontWeight: '700', color: '#0369A1' },
+  voiceSub: { fontSize: 12, color: '#0284C7' },
 
   // Labels
   sectionLabel: { fontSize: 13, fontWeight: '700', color: '#94A3B8', marginBottom: 12, marginLeft: 4, letterSpacing: 1 },

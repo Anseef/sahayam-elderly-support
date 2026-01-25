@@ -13,6 +13,7 @@ import ServiceDetailScreen from './src/screens/ServiceDetailScreen';
 import ElderlyProfile from './src/screens/ElderlyProfile';
 import EditElderlyProfile from './src/screens/EditElderlyProfile';
 import AddServiceScreen from './src/screens/AddServiceScreen';
+import LoginScreen from './src/screens/LoginScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -68,11 +69,12 @@ function MainTabs() {
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        
+      <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
+
+        <Stack.Screen name="Login" component={LoginScreen} /> 
+        <Stack.Screen name="Register" component={RegisterScreen} /> 
         <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen name="LocationSelectScreen" component={LocationSelectScreen} />
-        <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name='ServiceDetail' component={ServiceDetailScreen}/>
         <Stack.Screen name="ElderProfile" component={ElderlyProfile} />
         <Stack.Screen name="EditElderlyProfile" component={EditElderlyProfile} />
