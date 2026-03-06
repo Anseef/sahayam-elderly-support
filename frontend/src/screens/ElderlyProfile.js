@@ -30,7 +30,6 @@ const ElderlyProfile = ({ navigation }) => {
     location:"No location"
   });
 
-  // --- FETCH PROFILE DATA ---
   const fetchProfile = async () => {
     try {
       // 1. Get ID from Local Storage
@@ -107,7 +106,7 @@ const pickImage = async () => {
 
         // CHECK IP HERE!
         // Replace '192.168.1.5' with your real computer IP if needed.
-        const apiUrl = `${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/image/${parsedUser.id}`;
+        const apiUrl = `${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${parsedUser.id}`;
         
         console.log("🚀 Uploading to:", apiUrl);
 

@@ -13,20 +13,23 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Import Storage
+import AsyncStorage from '@react-native-async-storage/async-storage'; 
 
 export default function EditElderlyProfile({ route, navigation }) {
   const { currentUser, onSave } = route.params;
   const [formData, setFormData] = useState(currentUser);
-  const [saving, setSaving] = useState(false); // Loading state
+  const [saving, setSaving] = useState(false); 
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const handleSave = async () => {
-    // 1. Validation
-    if (!formData.name || !formData.phone) {
+    // 1. Validation (Support both old frontend keys and new DB keys)
+    const currentName = formData.name || formData.fullName;
+    const currentPhone = formData.phone || formData.phoneNumber;
+
+    if (!currentName || !currentPhone) {
       Alert.alert("Error", "Name and Phone are required.");
       return;
     }
@@ -38,21 +41,35 @@ export default function EditElderlyProfile({ route, navigation }) {
       const storedUser = await AsyncStorage.getItem('user');
       if (!storedUser) return;
       const parsedUser = JSON.parse(storedUser);
+      const userId = parsedUser.id || parsedUser._id;
 
-      // 3. Send Data to Backend
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/update/${parsedUser.id}`, {
+      // 3. Format the payload to match MongoDB EXACTLY
+      const payload = {
+        fullName: currentName,
+        phoneNumber: currentPhone,
+        aadhaarNumber: formData.aadhaar || formData.aadhaarNumber,
+        address: formData.address,
+        location: formData.location,
+        bloodGroup: formData.bloodGroup,
+        conditions: formData.conditions,
+        guardian: formData.guardian
+      };
+
+      // 4. Send Data to the correct generic profile endpoint
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${userId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData), // Send the form data
+        body: JSON.stringify(payload), 
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        // 4. Update Previous Screen & Go Back
-        onSave(formData); 
+        // 5. Update Previous Screen & Go Back
+        // We pass back the mapped payload so the profile screen updates correctly
+        onSave({ ...formData, ...payload }); 
         Alert.alert("Success", "Profile updated successfully!");
         navigation.goBack();
       } else {
@@ -88,11 +105,11 @@ export default function EditElderlyProfile({ route, navigation }) {
         <ScrollView contentContainerStyle={styles.formContainer}>
           
           <Text style={styles.sectionLabel}>PERSONAL DETAILS</Text>
-          <InputField label="Full Name" value={formData.name} onChangeText={(t) => handleChange('name', t)} />
-          <InputField label="Phone Number" value={formData.phone} onChangeText={(t) => handleChange('phone', t)} keyboardType="phone-pad" />
+          <InputField label="Full Name" value={formData.name || formData.fullName} onChangeText={(t) => handleChange('fullName', t)} />
+          <InputField label="Phone Number" value={formData.phone || formData.phoneNumber} onChangeText={(t) => handleChange('phoneNumber', t)} keyboardType="phone-pad" />
           <InputField label="Address" value={formData.address} onChangeText={(t) => handleChange('address', t)} multiline />
           <InputField label="City / Location" value={formData.location} onChangeText={(t) => handleChange('location', t)} placeholder="e.g. Pathanamthitta"/>
-          <InputField label="Aadhaar Number" value={formData.aadhaar} onChangeText={(t) => handleChange('aadhaar', t)} keyboardType="numeric" />
+          <InputField label="Aadhaar Number" value={formData.aadhaar || formData.aadhaarNumber} onChangeText={(t) => handleChange('aadhaarNumber', t)} keyboardType="numeric" />
 
           <Text style={styles.sectionLabel}>MEDICAL INFO</Text>
           <InputField label="Blood Group" value={formData.bloodGroup} onChangeText={(t) => handleChange('bloodGroup', t)} />

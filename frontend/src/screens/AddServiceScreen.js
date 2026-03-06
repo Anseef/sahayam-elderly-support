@@ -16,9 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { Audio } from 'expo-av'; 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import DateTimePicker from '@react-native-community/datetimepicker'; // <--- IMPORT THIS
+import DateTimePicker from '@react-native-community/datetimepicker'; 
+import * as Location from 'expo-location';
 
-const { width } = Dimensions.get('window');
+import * as FileSystem from 'expo-file-system/legacy'; 
 
 export default function AddServiceScreen({ navigation }) {
   const [inputMode, setInputMode] = useState('text'); 
@@ -30,12 +31,10 @@ export default function AddServiceScreen({ navigation }) {
   const [category, setCategory] = useState('');
   const [location, setLocation] = useState('');
   
-  // --- NEW DATE STATE ---
-  const [date, setDate] = useState(new Date()); // Actual Date Object
+  const [date, setDate] = useState(new Date()); 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
-  const [dateText, setDateText] = useState(''); // Text to display
-  // ----------------------
+  const [dateText, setDateText] = useState(''); 
 
   const [notes, setNotes] = useState('');
   const [isPaid, setIsPaid] = useState(false);
@@ -51,50 +50,87 @@ export default function AddServiceScreen({ navigation }) {
     { id: 'other', label: 'Other', icon: 'clipboard-list' },
   ];
 
-  // Permissions & Audio (Same as before)
+  // --- PERMISSIONS ---
   useEffect(() => {
     (async () => {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') Alert.alert('Permission missing', 'Microphone access needed.');
+      const { status: audioStatus } = await Audio.requestPermissionsAsync();
+      const { status: locStatus } = await Location.requestForegroundPermissionsAsync();
+      
+      if (audioStatus !== 'granted') Alert.alert('Permission missing', 'Microphone access needed.');
+      if (locStatus !== 'granted') Alert.alert('Permission missing', 'Location access needed.');
     })();
   }, []);
 
-  // ... (Keep startRecording, stopRecording, playSound functions same as before) ...
-  async function startRecording() { /* ... */ }
-  async function stopRecording() { /* ... */ }
-  async function playSound() { /* ... */ }
+  // --- AUDIO RECORDING ---
+  async function startRecording() {
+    try {
+      setVoiceFile(null); 
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecording(recording);
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Failed to start recording', err);
+      Alert.alert("Error", "Could not start recording.");
+    }
+  }
+
+  async function stopRecording() {
+    setIsRecording(false);
+    setRecording(null);
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI(); 
+      setVoiceFile(uri); 
+    } catch (error) {
+      console.error('Failed to stop recording', error);
+    }
+  }
+
+  async function playSound() {
+    if (!voiceFile) return;
+    try {
+      const { sound } = await Audio.Sound.createAsync({ uri: voiceFile });
+      setSound(sound);
+      await sound.playAsync();
+    } catch (error) {
+      Alert.alert("Playback Error", "Could not play audio.");
+    }
+  }
+
   useEffect(() => { return sound ? () => { sound.unloadAsync(); } : undefined; }, [sound]);
 
-  // --- DATE PICKER HANDLERS ---
+  // --- DATE PICKER ---
   const onDateChange = (event, selectedDate) => {
-    if (event.type === 'dismissed') {
-      setShowDatePicker(false);
-      return;
-    }
+    if (event.type === 'dismissed') { setShowDatePicker(false); return; }
     const currentDate = selectedDate || date;
     setShowDatePicker(false);
     setDate(currentDate);
-    // After picking date, show time picker immediately
     setShowTimePicker(true);
   };
 
   const onTimeChange = (event, selectedTime) => {
-    if (event.type === 'dismissed') {
-      setShowTimePicker(false);
-      return;
-    }
+    if (event.type === 'dismissed') { setShowTimePicker(false); return; }
     const currentTime = selectedTime || date;
     setShowTimePicker(false);
-    setDate(currentTime); // This updates the main 'date' object with both correct date & time
-
-    // Format for display
-    const formatted = currentTime.toLocaleString('en-US', { 
-      weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
-    });
-    setDateText(formatted);
+    setDate(currentTime); 
+    
+    // Clean formatting without seconds
+    const datePart = currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const timePart = currentTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    
+    setDateText(`${datePart}, ${timePart}`);
   };
-  // ----------------------------
 
+  // --- HELPER FUNCTION: GET CURRENT CLEAN DATE ---
+  const getCleanCurrentDate = () => {
+      const now = new Date();
+      const datePart = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const timePart = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `${datePart}, ${timePart}`;
+  };
+
+  // --- SUBMIT LOGIC ---
   const handleSubmit = async () => {
     if (!category) { Alert.alert("Missing Info", "Please select a category."); return; }
     if (inputMode === 'text' && (!location || !dateText)) { Alert.alert("Missing Info", "Please fill in location and time."); return; }
@@ -107,17 +143,57 @@ export default function AddServiceScreen({ navigation }) {
       if (!storedUser) return;
       const user = JSON.parse(storedUser);
 
+      // --- 1. GET CURRENT LOCATION & REVERSE GEOCODE ---
+      // This runs for BOTH Voice Mode and Text Mode
+      let curr_location = "Location not detected"; 
+      try {
+        let { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        
+        let addressResponse = await Location.reverseGeocodeAsync({
+          latitude: coords.latitude,
+          longitude: coords.longitude
+        });
+
+        if (addressResponse.length > 0) {
+          const addr = addressResponse[0];
+          const parts = [
+            addr.street, 
+            addr.city, 
+            addr.subregion, 
+            addr.region
+          ].filter(part => part); 
+
+          curr_location = parts.length > 0 ? parts.join(', ') : "Unknown Address";
+        }
+      } catch (e) {
+        console.warn("Location Error:", e);
+        curr_location = "Location unavailable";
+      }
+      // --------------------------------------------------
+
+      // --- 2. PROCESS AUDIO ---
+      let finalVoiceData = null;
+      if (inputMode === 'voice' && voiceFile) {
+        const base64Audio = await FileSystem.readAsStringAsync(voiceFile, { 
+          encoding: 'base64' 
+        });
+        finalVoiceData = `data:audio/m4a;base64,${base64Audio}`; 
+      }
+
+      // --- 3. PAYLOAD ---
       const payload = {
-        requesterId: user.id,
-        requesterName: user.name,
+        requesterId: user.id || user._id,
+        requesterName: user.name || user.fullName,
         inputMode,
         category,
-        location,
-        dateTime: dateText, // Send the formatted string
+        // If voice, default the main location string to the GPS address. If text, use what they typed.
+        location: inputMode === 'voice' ? curr_location : location, 
+        dateTime: dateText || getCleanCurrentDate(), 
         notes,
-        voiceUri: voiceFile,
+        voiceUri: finalVoiceData,
         isPaid,
-        paymentAmount
+        paymentAmount,
+        curr_location // Pass the strict GPS address in both modes
       };
 
       const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/create_request`, {
@@ -127,14 +203,16 @@ export default function AddServiceScreen({ navigation }) {
       });
 
       const data = await response.json();
+
       if (response.ok) {
-        Alert.alert("Success", "Request posted!", [{ text: "OK", onPress: () => navigation.goBack() }]);
+        Alert.alert("Success", "Request posted successfully!", [{ text: "OK", onPress: () => navigation.goBack() }]);
       } else {
-        Alert.alert("Error", data.message);
+        Alert.alert("Error", data.message || "Failed to post.");
       }
+
     } catch (error) {
-      console.error(error);
-      Alert.alert("Network Error", "Could not connect.");
+      console.error("Submit Error:", error);
+      Alert.alert("Network Error", "Check your connection.");
     } finally {
       setSubmitting(false);
     }
@@ -142,7 +220,6 @@ export default function AddServiceScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#1E293B" />
@@ -154,10 +231,7 @@ export default function AddServiceScreen({ navigation }) {
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-          {/* MODE SWITCH & CATEGORIES (Same as before) */}
-          {/* ... (Copy Mode Switch & Category Grid code here) ... */}
-           {/* MODE SELECTION */}
-           <Text style={styles.questionText}>How do you want to describe your need?</Text>
+          <Text style={styles.questionText}>How do you want to describe your need?</Text>
           <View style={styles.modeSwitch}>
             <TouchableOpacity 
               style={[styles.modeBtn, inputMode === 'text' && styles.modeBtnActive]} 
@@ -176,7 +250,6 @@ export default function AddServiceScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
-          {/* CATEGORY SELECTION */}
           <Text style={styles.sectionLabel}>What help do you need?</Text>
           <View style={styles.categoryGrid}>
             {categories.map((cat) => (
@@ -193,19 +266,37 @@ export default function AddServiceScreen({ navigation }) {
             ))}
           </View>
 
-
-          {/* VOICE MODE (Same as before) */}
+          {/* VOICE MODE UI */}
           {inputMode === 'voice' && (
              <View style={styles.voiceContainer}>
-             <Text style={styles.voiceInstruction}>
-               Tap the microphone and speak.{"\n"}Mention location, time, and details clearly.
-             </Text>
-             {/* ... Mic Button ... */}
-             {/* (Keep your mic code here) */}
-           </View>
+               <Text style={styles.voiceInstruction}>
+                 Tap the microphone and speak.{"\n"}Mention location, time, and details clearly.
+               </Text>
+               
+               <View style={[styles.micRing, isRecording && styles.micRingActive]}>
+                 <TouchableOpacity 
+                   style={[styles.micButton, isRecording && styles.micButtonRecording]} 
+                   onPress={isRecording ? stopRecording : startRecording}
+                   activeOpacity={0.8}
+                 >
+                   <Ionicons name={isRecording ? "stop" : "mic"} size={42} color="#FFF" />
+                 </TouchableOpacity>
+               </View>
+               
+               <Text style={styles.recordingStatus}>
+                 {isRecording ? "Recording... Tap to stop" : (voiceFile ? "Voice Note Saved ✓" : "Tap to Record")}
+               </Text>
+               
+               {voiceFile && !isRecording && (
+                 <TouchableOpacity style={styles.playPreview} onPress={playSound}>
+                   <Ionicons name="play" size={20} color="#007EA7" />
+                   <Text style={styles.playText}>Play Preview</Text>
+                 </TouchableOpacity>
+               )}
+             </View>
           )}
 
-          {/* TEXT MODE - UPDATED WITH DATE PICKER */}
+          {/* TEXT MODE UI */}
           {inputMode === 'text' && (
             <View style={styles.formContainer}>
               <View style={styles.inputGroup}>
@@ -218,13 +309,11 @@ export default function AddServiceScreen({ navigation }) {
                 />
               </View>
 
-              {/* NEW DATE TIME PICKER FIELD */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>When? (Date & Time)</Text>
                 <TouchableOpacity 
                   style={styles.datePickerBtn} 
                   onPress={() => setShowDatePicker(true)}
-                  activeOpacity={0.8}
                 >
                   <Ionicons name="calendar-outline" size={20} color="#64748B" style={{marginRight: 10}} />
                   <Text style={[styles.dateText, !dateText && {color: '#94A3B8'}]}>
@@ -233,25 +322,12 @@ export default function AddServiceScreen({ navigation }) {
                 </TouchableOpacity>
 
                 {showDatePicker && (
-                  <DateTimePicker
-                    value={date}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={onDateChange}
-                    minimumDate={new Date()} // Cannot pick past dates
-                  />
+                  <DateTimePicker value={date} mode="date" display={Platform.OS === 'ios' ? 'spinner' : 'default'} onChange={onDateChange} minimumDate={new Date()} />
                 )}
-
                 {showTimePicker && (
-                  <DateTimePicker
-                    value={date}
-                    mode="time"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={onTimeChange}
-                  />
+                  <DateTimePicker value={date} mode="time" display={Platform.OS === 'ios' ? 'spinner' : 'default'} onChange={onTimeChange} />
                 )}
               </View>
-              {/* ----------------------------- */}
 
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Any other details?</Text>
@@ -266,41 +342,28 @@ export default function AddServiceScreen({ navigation }) {
             </View>
           )}
 
-          {/* PAYMENT & SUBMIT (Same as before) */}
-          {/* ... Copy Payment Section & Submit Button here ... */}
-           {/* PAYMENT DETAILS */}
-           <Text style={styles.sectionLabel}>Payment for Volunteer</Text>
+          {/* PAYMENT */}
+          <Text style={styles.sectionLabel}>Payment for Volunteer</Text>
           <View style={styles.paymentCard}>
             <View style={styles.paymentRow}>
               <Text style={styles.paymentQuestion}>Will you pay for this service?</Text>
               <View style={styles.toggleRow}>
-                <TouchableOpacity 
-                  style={[styles.toggleBtn, !isPaid && styles.toggleBtnOff]} 
-                  onPress={() => setIsPaid(false)}
-                >
+                <TouchableOpacity style={[styles.toggleBtn, !isPaid && styles.toggleBtnOff]} onPress={() => setIsPaid(false)}>
                   <Text style={[styles.toggleText, !isPaid && {color: '#64748B'}]}>No</Text>
                 </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.toggleBtn, isPaid && styles.toggleBtnOn]} 
-                  onPress={() => setIsPaid(true)}
-                >
+                <TouchableOpacity style={[styles.toggleBtn, isPaid && styles.toggleBtnOn]} onPress={() => setIsPaid(true)}>
                   <Text style={[styles.toggleText, isPaid && {color: '#FFF'}]}>Yes</Text>
                 </TouchableOpacity>
               </View>
             </View>
-            
             {isPaid && (
               <View style={styles.amountContainer}>
                 <Text style={styles.label}>Enter Amount (₹)</Text>
                 <View style={styles.currencyInputWrap}>
                    <Text style={styles.currencySymbol}>₹</Text>
                    <TextInput
-                    style={styles.currencyInput}
-                    placeholder="200"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="numeric"
-                    value={paymentAmount}
-                    onChangeText={setPaymentAmount}
+                    style={styles.currencyInput} placeholder="200" placeholderTextColor="#94A3B8"
+                    keyboardType="numeric" value={paymentAmount} onChangeText={setPaymentAmount}
                   />
                 </View>
                 <Text style={styles.hintText}>* You can pay cash directly after task completion.</Text>
@@ -310,7 +373,6 @@ export default function AddServiceScreen({ navigation }) {
 
           <View style={{height: 20}} />
 
-          {/* SUBMIT BUTTON */}
           <TouchableOpacity 
             style={[styles.submitButton, submitting && {opacity: 0.7}]} 
             onPress={handleSubmit} 
@@ -321,7 +383,7 @@ export default function AddServiceScreen({ navigation }) {
               <ActivityIndicator color="#FFF" />
             ) : (
               <>
-                <Text style={styles.submitButtonText}>Request Help</Text>
+                <Text style={styles.submitButtonText}>{submitting ? "Processing..." : "Request Help"}</Text>
                 <View style={styles.arrowCircle}>
                    <Ionicons name="arrow-forward" size={18} color="#007EA7" />
                 </View>
@@ -329,7 +391,6 @@ export default function AddServiceScreen({ navigation }) {
             )}
           </TouchableOpacity>
           <View style={{height: 40}} />
-
 
         </ScrollView>
       </KeyboardAvoidingView>
@@ -344,7 +405,6 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 22, fontWeight: '800', color: '#1E293B' },
   scrollContent: { padding: 20 },
   
-  // Keep previous styles for Mode, Category, Mic, Payment, etc.
   questionText: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 14 },
   modeSwitch: { flexDirection: 'row', backgroundColor: '#FFF', borderRadius: 16, padding: 6, marginBottom: 28, elevation: 2 },
   modeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 12, gap: 8 },
@@ -360,24 +420,26 @@ const styles = StyleSheet.create({
   catText: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   catTextActive: { color: '#007EA7', fontWeight: '800' },
 
+  // VOICE UI STYLES
   voiceContainer: { alignItems: 'center', backgroundColor: '#FFF', padding: 24, borderRadius: 20, marginBottom: 24, elevation:2 },
-  voiceInstruction: { textAlign: 'center', color: '#64748B', marginBottom: 24 },
+  voiceInstruction: { textAlign: 'center', color: '#64748B', marginBottom: 24, lineHeight: 22, fontSize: 14 },
+  micRing: { padding: 8, borderRadius: 100, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 16 },
+  micRingActive: { borderColor: '#FECACA', backgroundColor: '#FEF2F2' },
+  micButton: {
+    width: 80, height: 80, borderRadius: 40, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center',
+    shadowColor: "#EF4444", shadowOpacity: 0.4, shadowRadius: 10, elevation: 6
+  },
+  micButtonRecording: { backgroundColor: '#DC2626', transform: [{ scale: 0.95 }] },
+  recordingStatus: { fontSize: 15, fontWeight: '600', color: '#334155' },
+  playPreview: { flexDirection: 'row', alignItems: 'center', marginTop: 16, gap: 8, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#E0F2FE', borderRadius: 20 },
+  playText: { color: '#007EA7', fontWeight: '700', fontSize: 13 },
 
   formContainer: { marginBottom: 10 },
   inputGroup: { marginBottom: 18 },
   label: { fontSize: 14, fontWeight: '700', color: '#334155', marginBottom: 8 },
   input: { backgroundColor: '#F1F5F9', borderRadius: 12, padding: 16, fontSize: 16, color: '#0F172A' },
-
-  // --- NEW DATE PICKER STYLES ---
-  datePickerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 16,
-  },
+  datePickerBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', borderRadius: 12, padding: 16 },
   dateText: { fontSize: 16, color: '#0F172A', fontWeight: '500' },
-  // ------------------------------
 
   paymentCard: { backgroundColor: '#FFF', borderRadius: 20, padding: 20, marginBottom: 24, elevation: 2 },
   paymentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

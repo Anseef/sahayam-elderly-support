@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,37 +10,130 @@ import {
   ScrollView,
   Modal,
   TextInput,
-  Dimensions
+  Dimensions,
+  ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import * as SMS from 'expo-sms';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
+import * as Location from 'expo-location';
+import { Audio } from 'expo-av'; // Added Audio import
 
 const { width } = Dimensions.get('window');
 
 export default function EmergencyHelpScreen({ navigation }) {
-  // --- STATE (UNCHANGED LOGIC) ---
+  // --- STATE ---
   const [sirenActive, setSirenActive] = useState(false);
   const [sosPressed, setSosPressed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sound, setSound] = useState(null); // Added Sound State
 
-  const [contacts, setContacts] = useState([
-    { id: '1', name: 'Son (Rahul)', relation: 'Primary Contact', phone: '9876543210', initial: 'S', color: '#E8F5E9', textColor: '#2E7D32' },
-    { id: '2', name: 'Dr. Anjali', relation: 'Family Doctor', phone: '9123456789', initial: 'D', color: '#F3E5F5', textColor: '#7B1FA2' },
-  ]);
-
+  // Contacts State
+  const [contacts, setContacts] = useState([]);
+  
+  // Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newRelation, setNewRelation] = useState('');
 
-  // --- HANDLERS (UNCHANGED LOGIC) ---
-  const toggleSiren = () => {
+  // --- AUDIO CLEANUP ---
+  useEffect(() => {
+    return sound
+      ? () => {
+          sound.unloadAsync();
+        }
+      : undefined;
+  }, [sound]);
+
+  // --- 1. FETCH CONTACTS FROM DB ---
+  const fetchContacts = async () => {
+    try {
+      const storedUser = await AsyncStorage.getItem('user');
+      if (!storedUser) return;
+      const parsedUser = JSON.parse(storedUser);
+
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${parsedUser.id}`);
+      const data = await response.json();
+
+      if (response.ok && data.trustedContacts) {
+        setContacts(data.trustedContacts);
+      }
+    } catch (error) {
+      console.error("Fetch Contacts Error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchContacts();
+    }, [])
+  );
+
+  // --- 2. SAVE CONTACTS TO DB ---
+  const saveContactsToBackend = async (updatedContacts) => {
+    try {
+      const storedUser = await AsyncStorage.getItem('user');
+      if (!storedUser) return;
+      const parsedUser = JSON.parse(storedUser);
+
+      await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/contacts/${parsedUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contacts: updatedContacts }),
+      });
+    } catch (error) {
+      console.error("Save Contacts Error:", error);
+      Alert.alert("Error", "Could not save changes to server.");
+    }
+  };
+
+  // --- SIREN AUDIO LOGIC ---
+  const playSiren = async () => {
+    try {
+      // Force sound to play even if phone is on silent
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+        staysActiveInBackground: true,
+      });
+
+      // Using a reliable public domain emergency siren audio file
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8c8a73467.mp3?filename=police-siren-21066.mp3' },
+        { shouldPlay: true, isLooping: true, volume: 1.0 }
+      );
+      setSound(newSound);
+    } catch (error) {
+      console.error("Error playing siren:", error);
+    }
+  };
+
+  const stopSiren = async () => {
+    if (sound) {
+      await sound.stopAsync();
+      await sound.unloadAsync();
+      setSound(null);
+    }
+  };
+
+  // --- HANDLERS ---
+  const toggleSiren = async () => {
     const newState = !sirenActive;
     setSirenActive(newState);
+    
     if (newState) {
       Vibration.vibrate([500, 500, 500], true); 
-      Alert.alert("Loud Siren", "🔊 [LOUD ALARM SOUND PLAYING]");
+      await playSiren(); // Start the audio loop
     } else {
       Vibration.cancel();
+      await stopSiren(); // Stop the audio loop
     }
   };
 
@@ -48,16 +141,80 @@ export default function EmergencyHelpScreen({ navigation }) {
     Linking.openURL(`tel:${number}`);
   };
 
-  const handleSOS = () => {
+  const handleSOS = async () => {
     setSosPressed(true);
     Vibration.vibrate(400); 
-    setTimeout(() => {
-      setSosPressed(false);
-      Alert.alert("SOS SENT!", "Emergency contacts and nearby volunteers have been notified.");
-    }, 1500);
+
+    try {
+      // --- 1. SEND SOS TO NEARBY VOLUNTEERS (DATABASE) ---
+      const storedUser = await AsyncStorage.getItem('user');
+      if (storedUser) {
+        const user = JSON.parse(storedUser);
+        
+        // Get Location
+        let curr_location = "Location Unknown";
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+             let { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+             let addressResponse = await Location.reverseGeocodeAsync({
+               latitude: coords.latitude,
+               longitude: coords.longitude
+             });
+             if (addressResponse.length > 0) {
+               const addr = addressResponse[0];
+               const parts = [addr.street, addr.city, addr.subregion, addr.region].filter(Boolean); 
+               curr_location = parts.length > 0 ? parts.join(', ') : "Unknown Address";
+             }
+          }
+        } catch (e) {
+          console.warn("Location error during SOS:", e);
+        }
+
+        // Send to backend
+        await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/create_request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requesterId: user.id || user._id,
+            requesterName: user.name || user.fullName,
+            inputMode: 'sos',
+            category: 'Emergency', // <-- Triggers VolunteerEmergencyScreen
+            location: "Immediate Emergency Alert",
+            dateTime: new Date().toLocaleString(),
+            notes: "URGENT SOS ACTIVATED by Elderly User.",
+            curr_location: curr_location,
+            isPaid: false,
+            paymentAmount: 0
+          })
+        });
+      }
+
+      // --- 2. SEND SMS TO TRUSTED CONTACTS ---
+      const recipients = contacts.map(contact => contact.phone);
+      if (recipients.length > 0) {
+        const isAvailable = await SMS.isAvailableAsync();
+        if (isAvailable) {
+          await SMS.sendSMSAsync(
+            recipients,
+            "🚨 EMERGENCY ALERT: I need help! Please contact me immediately. This is an SOS from the Sahayam App."
+          );
+        }
+      }
+
+      Alert.alert("SOS Sent!", "Local volunteers and your trusted contacts have been alerted.");
+
+    } catch (error) {
+      console.error(error);
+      Alert.alert("Error", "Could not complete SOS process. Call emergency services manually.");
+    } finally {
+      setTimeout(() => {
+        setSosPressed(false);
+      }, 1500);
+    }
   };
 
-  const handleAddContact = () => {
+  const handleAddContact = async () => {
     if (!newName || !newPhone) {
       Alert.alert("Missing Info", "Please enter at least a Name and Phone Number.");
       return;
@@ -69,11 +226,14 @@ export default function EmergencyHelpScreen({ navigation }) {
       phone: newPhone,
       relation: newRelation || 'Trusted Contact',
       initial: newName.charAt(0).toUpperCase(),
-      color: '#E3F2FD',
-      textColor: '#1565C0'
+      color: '#E0F2FE',
+      textColor: '#007EA7'
     };
 
-    setContacts([...contacts, newContact]);
+    const updatedList = [...contacts, newContact];
+    setContacts(updatedList); // Update UI immediately
+    await saveContactsToBackend(updatedList); // Sync with DB
+
     setModalVisible(false);
     setNewName(''); setNewPhone(''); setNewRelation('');
   };
@@ -83,20 +243,37 @@ export default function EmergencyHelpScreen({ navigation }) {
       "Remove Contact", "Are you sure you want to remove this trusted contact?",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: 'destructive', onPress: () => setContacts(contacts.filter(c => c.id !== id)) }
+        { 
+          text: "Remove", 
+          style: 'destructive', 
+          onPress: async () => {
+            const updatedList = contacts.filter(c => c.id !== id);
+            setContacts(updatedList); // Update UI
+            await saveContactsToBackend(updatedList); // Sync with DB
+          } 
+        }
       ]
     );
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#007EA7" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       
       {/* --- HEADER --- */}
       <View style={styles.header}>
-        <View style={styles.headerIconBox}>
-          <MaterialIcons name="health-and-safety" size={24} color="#D32F2F" />
-        </View>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="#1E293B" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Emergency Help</Text>
+        <View style={{width: 40}} /> 
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -111,13 +288,13 @@ export default function EmergencyHelpScreen({ navigation }) {
               activeOpacity={0.9}
             >
               <View style={styles.sosInnerContent}>
-                <MaterialCommunityIcons name="broadcast" size={40} color="rgba(255,255,255,0.9)" />
+                <MaterialCommunityIcons name="broadcast" size={48} color="#FFF" />
                 <Text style={styles.sosText}>SOS</Text>
               </View>
             </TouchableOpacity>
           </View>
           <Text style={styles.instructionText}>
-            Hold for <Text style={{fontWeight: '700', color: '#D32F2F'}}>3 seconds</Text> to send alert
+            Hold for <Text style={{fontWeight: '700', color: '#EF4444'}}>3 seconds</Text> to send alert
           </Text>
         </View>
 
@@ -132,14 +309,14 @@ export default function EmergencyHelpScreen({ navigation }) {
               <MaterialCommunityIcons 
                 name={sirenActive ? "volume-high" : "volume-off"} 
                 size={24} 
-                color={sirenActive ? "#D32F2F" : "#546E7A"} 
+                color={sirenActive ? "#EF4444" : "#64748B"} 
               />
             </View>
             <View style={{flex: 1}}>
-              <Text style={[styles.sirenTitle, sirenActive && {color: '#FFF'}]}>
+              <Text style={[styles.sirenTitle, sirenActive && {color: '#EF4444'}]}>
                 {sirenActive ? "SIREN IS ON" : "Loud Siren"}
               </Text>
-              <Text style={[styles.sirenSub, sirenActive && {color: 'rgba(255,255,255,0.8)'}]}>
+              <Text style={[styles.sirenSub, sirenActive && {color: '#EF4444', opacity: 0.8}]}>
                 {sirenActive ? "Tap to silence alarm" : "Tap to alert people nearby"}
               </Text>
             </View>
@@ -147,47 +324,47 @@ export default function EmergencyHelpScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* --- SECTION 3: SERVICES GRID --- */}
+        {/* --- SECTION 3: QUICK DIAL --- */}
         <View style={styles.sectionContainer}>
-          <Text style={styles.sectionLabel}>QUICK DIAL SERVICES</Text>
+          <Text style={styles.sectionLabel}>Quick Dial Services</Text>
           <View style={styles.grid}>
             
             {/* Ambulance */}
-            <TouchableOpacity style={[styles.gridCard, {backgroundColor: '#E3F2FD'}]} onPress={() => callNumber('108')}>
-              <View style={[styles.gridIcon, {backgroundColor: '#BBDEFB'}]}>
-                <FontAwesome5 name="ambulance" size={20} color="#1565C0" />
+            <TouchableOpacity style={styles.gridCard} onPress={() => callNumber('108')}>
+              <View style={[styles.gridIcon, {backgroundColor: '#E0F2FE'}]}>
+                <FontAwesome5 name="ambulance" size={20} color="#0284C7" />
               </View>
-              <Text style={[styles.gridTitle, {color: '#1565C0'}]}>Ambulance</Text>
-              <Text style={[styles.gridNumber, {color: '#0D47A1'}]}>108</Text>
+              <Text style={styles.gridTitle}>Ambulance</Text>
+              <Text style={styles.gridNumber}>108</Text>
             </TouchableOpacity>
 
             {/* Police */}
-            <TouchableOpacity style={[styles.gridCard, {backgroundColor: '#FFF3E0'}]} onPress={() => callNumber('100')}>
-              <View style={[styles.gridIcon, {backgroundColor: '#FFE0B2'}]}>
-                <MaterialCommunityIcons name="police-badge" size={24} color="#E65100" />
+            <TouchableOpacity style={styles.gridCard} onPress={() => callNumber('100')}>
+              <View style={[styles.gridIcon, {backgroundColor: '#FFF7ED'}]}>
+                <MaterialCommunityIcons name="police-badge" size={24} color="#EA580C" />
               </View>
-              <Text style={[styles.gridTitle, {color: '#E65100'}]}>Police</Text>
-              <Text style={[styles.gridNumber, {color: '#BF360C'}]}>100</Text>
+              <Text style={styles.gridTitle}>Police</Text>
+              <Text style={styles.gridNumber}>100</Text>
             </TouchableOpacity>
 
             {/* Fire */}
-            <TouchableOpacity style={[styles.gridCard, {backgroundColor: '#FFEBEE'}]} onPress={() => callNumber('101')}>
-              <View style={[styles.gridIcon, {backgroundColor: '#FFCDD2'}]}>
-                <MaterialCommunityIcons name="fire-truck" size={24} color="#C62828" />
+            <TouchableOpacity style={styles.gridCard} onPress={() => callNumber('101')}>
+              <View style={[styles.gridIcon, {backgroundColor: '#FEF2F2'}]}>
+                <MaterialCommunityIcons name="fire-truck" size={24} color="#DC2626" />
               </View>
-              <Text style={[styles.gridTitle, {color: '#C62828'}]}>Fire Force</Text>
-              <Text style={[styles.gridNumber, {color: '#B71C1C'}]}>101</Text>
+              <Text style={styles.gridTitle}>Fire Force</Text>
+              <Text style={styles.gridNumber}>101</Text>
             </TouchableOpacity>
 
           </View>
         </View>
 
-        {/* --- SECTION 4: CONTACTS --- */}
+        {/* --- SECTION 4: TRUSTED CONTACTS --- */}
         <View style={styles.sectionContainer}>
           <View style={styles.contactHeader}>
-            <Text style={styles.sectionLabel}>TRUSTED CONTACTS</Text>
+            <Text style={styles.sectionLabel}>Trusted Contacts</Text>
             <TouchableOpacity style={styles.addBtnSmall} onPress={() => setModalVisible(true)}>
-              <Ionicons name="add" size={18} color="#007EA7" />
+              <Ionicons name="add" size={16} color="#007EA7" />
               <Text style={styles.addBtnText}>Add New</Text>
             </TouchableOpacity>
           </View>
@@ -205,49 +382,51 @@ export default function EmergencyHelpScreen({ navigation }) {
                 </View>
 
                 <View style={styles.contactActions}>
-                  <TouchableOpacity style={styles.actionIconBtn} onPress={() => confirmDelete(contact.id)}>
-                    <Ionicons name="trash-outline" size={18} color="#B0BEC5" />
+                  <TouchableOpacity style={styles.actionIconBtn} onPress={() => callNumber(contact.phone)}>
+                    <View style={styles.callCircle}>
+                        <Ionicons name="call" size={16} color="#FFF" />
+                    </View>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.callBtn} onPress={() => callNumber(contact.phone)}>
-                    <Ionicons name="call" size={18} color="#FFF" />
-                    <Text style={styles.callBtnText}>Call</Text>
+                  <TouchableOpacity style={styles.deleteIconBtn} onPress={() => confirmDelete(contact.id)}>
+                    <Ionicons name="trash-outline" size={18} color="#94A3B8" />
                   </TouchableOpacity>
                 </View>
               </View>
             ))
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No contacts added yet.</Text>
+              <Ionicons name="people-outline" size={40} color="#CBD5E1" />
+              <Text style={styles.emptyText}>No emergency contacts added.</Text>
             </View>
           )}
         </View>
 
       </ScrollView>
 
-      {/* --- ADD MODAL (Modernized) --- */}
+      {/* --- MODAL --- */}
       <Modal animationType="fade" transparent={true} visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Emergency Contact</Text>
+              <Text style={styles.modalTitle}>New Contact</Text>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#90A4AE" />
+                <Ionicons name="close" size={24} color="#64748B" />
               </TouchableOpacity>
             </View>
             
             <View style={styles.inputGroup}>
-              <View style={styles.inputIconBox}><Ionicons name="person-outline" size={18} color="#546E7A" /></View>
-              <TextInput style={styles.input} placeholder="Name (e.g. Rahul)" value={newName} onChangeText={setNewName} />
+              <Text style={styles.inputLabel}>Name</Text>
+              <TextInput style={styles.input} placeholder="Eg. Rahul" value={newName} onChangeText={setNewName} />
             </View>
 
             <View style={styles.inputGroup}>
-              <View style={styles.inputIconBox}><Ionicons name="call-outline" size={18} color="#546E7A" /></View>
-              <TextInput style={styles.input} placeholder="Phone Number" value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" />
+              <Text style={styles.inputLabel}>Phone Number</Text>
+              <TextInput style={styles.input} placeholder="Eg. 9876543210" value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" />
             </View>
 
             <View style={styles.inputGroup}>
-              <View style={styles.inputIconBox}><Ionicons name="heart-outline" size={18} color="#546E7A" /></View>
-              <TextInput style={styles.input} placeholder="Relation (e.g. Son)" value={newRelation} onChangeText={setNewRelation} />
+              <Text style={styles.inputLabel}>Relationship</Text>
+              <TextInput style={styles.input} placeholder="Eg. Son, Doctor" value={newRelation} onChangeText={setNewRelation} />
             </View>
 
             <TouchableOpacity style={styles.saveBtn} onPress={handleAddContact}>
@@ -262,96 +441,99 @@ export default function EmergencyHelpScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FAFAFA' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
   
   // Header
-  header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16,
-    backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F0F0F0'
+  header: { 
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', 
+    padding: 20, backgroundColor: '#F8FAFC'
   },
-  headerIconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#FFEBEE', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  headerTitle: { fontSize: 20, fontWeight: '800', color: '#B71C1C' },
+  backButton: { 
+    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FFF', borderWidth: 1, borderColor: '#F1F5F9'
+  },
+  headerTitle: { fontSize: 20, fontWeight: '800', color: '#1E293B' },
 
   scrollContent: { paddingBottom: 40 },
   sectionContainer: { paddingHorizontal: 20, marginBottom: 24 },
-  sectionLabel: { fontSize: 12, fontWeight: '700', color: '#90A4AE', marginBottom: 12, letterSpacing: 1 },
+  sectionLabel: { fontSize: 13, fontWeight: '700', color: '#94A3B8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1 },
 
   // 1. SOS Section
-  sosSection: { alignItems: 'center', marginVertical: 30 },
+  sosSection: { alignItems: 'center', marginVertical: 20 },
   sosRing: {
-    padding: 10, borderRadius: 200, borderWidth: 1, borderColor: '#FFEBEE',
-    backgroundColor: '#FFEBEE' // Outer glow
+    padding: 8, borderRadius: 200, borderWidth: 1, borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2' 
   },
-  sosRingActive: { backgroundColor: '#FFCDD2', borderColor: '#EF9A9A' },
+  sosRingActive: { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' },
   sosButton: {
-    width: 180, height: 180, borderRadius: 90,
-    backgroundColor: '#D32F2F',
+    width: 160, height: 160, borderRadius: 80,
+    backgroundColor: '#EF4444',
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: "#D32F2F", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 10
+    shadowColor: "#EF4444", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 8
   },
-  sosButtonPressed: { transform: [{ scale: 0.96 }], backgroundColor: '#B71C1C' },
+  sosButtonPressed: { transform: [{ scale: 0.96 }], backgroundColor: '#DC2626' },
   sosInnerContent: { alignItems: 'center', justifyContent: 'center' },
-  sosText: { fontSize: 36, fontWeight: '900', color: '#FFF', letterSpacing: 2, marginTop: -4 },
-  instructionText: { marginTop: 24, fontSize: 14, color: '#546E7A' },
+  sosText: { fontSize: 32, fontWeight: '900', color: '#FFF', letterSpacing: 2, marginTop: 4 },
+  instructionText: { marginTop: 20, fontSize: 14, color: '#64748B' },
 
   // 2. Siren Toggle
   sirenBar: {
-    flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 16,
-    borderWidth: 1, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, shadowOffset: {width: 0, height: 2}
+    flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 20,
+    borderWidth: 1, elevation: 2, shadowColor: '#64748B', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: {width: 0, height: 4}
   },
-  sirenBarInactive: { backgroundColor: '#FFF', borderColor: '#ECEFF1' },
-  sirenBarActive: { backgroundColor: '#D32F2F', borderColor: '#B71C1C' },
-  sirenIconCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  iconCircleInactive: { backgroundColor: '#ECEFF1' },
-  iconCircleActive: { backgroundColor: 'rgba(255,255,255,0.2)' },
-  sirenTitle: { fontSize: 16, fontWeight: '700', color: '#263238' },
-  sirenSub: { fontSize: 12, color: '#78909C' },
-  pulseIndicator: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#FFF', marginRight: 8 },
+  sirenBarInactive: { backgroundColor: '#FFFFFF', borderColor: '#F1F5F9' },
+  sirenBarActive: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  sirenIconCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
+  iconCircleInactive: { backgroundColor: '#F1F5F9' },
+  iconCircleActive: { backgroundColor: '#FECACA' },
+  sirenTitle: { fontSize: 16, fontWeight: '700', color: '#1E293B' },
+  sirenSub: { fontSize: 13, color: '#64748B', marginTop: 2 },
+  pulseIndicator: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444', marginRight: 8 },
 
   // 3. Grid Services
   grid: { flexDirection: 'row', justifyContent: 'space-between' },
   gridCard: {
-    width: '31%', borderRadius: 16, paddingVertical: 16, alignItems: 'center',
-    borderWidth: 1, borderColor: 'rgba(0,0,0,0.03)'
+    width: '31%', borderRadius: 20, paddingVertical: 20, alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 1, borderColor: '#F1F5F9',
+    elevation: 2, shadowColor: '#64748B', shadowOpacity: 0.05, shadowRadius: 8
   },
-  gridIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
-  gridTitle: { fontSize: 12, fontWeight: '700', marginBottom: 2 },
-  gridNumber: { fontSize: 14, fontWeight: '800' },
+  gridIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  gridTitle: { fontSize: 12, fontWeight: '600', color: '#64748B', marginBottom: 4 },
+  gridNumber: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
 
   // 4. Contacts
   contactHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  addBtnSmall: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E0F7FA', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  addBtnText: { fontSize: 12, fontWeight: '700', color: '#007EA7', marginLeft: 2 },
+  addBtnSmall: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E0F2FE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
+  addBtnText: { fontSize: 12, fontWeight: '700', color: '#007EA7', marginLeft: 4 },
   
   contactCard: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, borderRadius: 16,
-    marginBottom: 10, borderWidth: 1, borderColor: '#F0F0F0',
-    shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 4, shadowOffset: {width: 0, height: 2}, elevation: 1
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 16,
+    marginBottom: 12, borderWidth: 1, borderColor: '#F1F5F9',
+    shadowColor: '#64748B', shadowOpacity: 0.03, shadowRadius: 6, shadowOffset: {width: 0, height: 2}, elevation: 1
   },
-  contactAvatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  contactAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
   contactDetails: { flex: 1 },
-  contactName: { fontSize: 15, fontWeight: '700', color: '#263238' },
-  contactRole: { fontSize: 12, color: '#90A4AE' },
+  contactName: { fontSize: 16, fontWeight: '700', color: '#1E293B' },
+  contactRole: { fontSize: 13, color: '#64748B', marginTop: 2 },
   contactActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  actionIconBtn: { padding: 4 },
-  callBtn: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#4CAF50',
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, gap: 4
-  },
-  callBtnText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  emptyState: { alignItems: 'center', padding: 20 },
-  emptyText: { color: '#B0BEC5', fontStyle: 'italic' },
+  
+  callCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center' },
+  deleteIconBtn: { padding: 4 },
+  
+  emptyState: { alignItems: 'center', padding: 30, backgroundColor: '#FFF', borderRadius: 16, borderStyle: 'dashed', borderWidth: 2, borderColor: '#E2E8F0' },
+  emptyText: { color: '#94A3B8', marginTop: 8 },
 
   // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  modalContainer: { width: '85%', backgroundColor: '#FFF', borderRadius: 24, padding: 24, elevation: 5 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#263238' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContainer: { width: '85%', backgroundColor: '#FFF', borderRadius: 24, padding: 24, elevation: 10 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: '#1E293B' },
   
-  inputGroup: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F7F8', borderRadius: 12, paddingHorizontal: 12, marginBottom: 14, borderWidth: 1, borderColor: '#ECEFF1' },
-  inputIconBox: { marginRight: 8 },
-  input: { flex: 1, height: 48, fontSize: 15, color: '#263238' },
+  inputGroup: { marginBottom: 16 },
+  inputLabel: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8 },
+  input: { backgroundColor: '#F1F5F9', borderRadius: 12, padding: 14, fontSize: 15, color: '#0F172A' },
   
-  saveBtn: { backgroundColor: '#007EA7', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 10 },
+  saveBtn: { backgroundColor: '#007EA7', paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 8 },
   saveBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' }
 });

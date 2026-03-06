@@ -8,7 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
-  Image // Ensure Image is imported
+  Image
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
