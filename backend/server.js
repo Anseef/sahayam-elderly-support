@@ -19,6 +19,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // 3. Routes
 app.use('/api/user', authRoute);
 app.use('/api/requests', requestRoute);
+app.use('/api/admin', require('./routes/admin'));
 
 // Connect to DB first, then start server
 connectToDb((err) => {

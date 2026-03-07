@@ -242,11 +242,36 @@ export default function ServiceDetailScreen({ route, navigation }) {
     }
   };
 
-  const handleReportIssue = () => {
+  const handleReportIssue = async () => {
     if (!complaintText.trim()) return Alert.alert("Required", "Please describe the issue.");
-    Alert.alert("Report Sent", "The admin team has been notified of this issue.");
-    setShowComplaintBox(false);
-    setComplaintText('');
+    if (!currentUser) return Alert.alert("Error", "User details not found.");
+    
+    setLoading(true);
+    try {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/report/${task._id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reportedBy: currentUser.id || currentUser._id,
+          reporterName: currentUser.name || currentUser.fullName,
+          reporterRole: currentUser.role,
+          issue: complaintText,
+          taskTitle: task.title || task.category
+        })
+      });
+
+      if (response.ok) {
+        Alert.alert("Report Sent", "The admin team has been notified of this issue. We will review it shortly.");
+        setShowComplaintBox(false);
+        setComplaintText('');
+      } else {
+        Alert.alert("Error", "Could not send report.");
+      }
+    } catch (error) {
+      Alert.alert("Network Error", "Check your connection.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -259,9 +284,14 @@ export default function ServiceDetailScreen({ route, navigation }) {
   
   const statusColors = getStatusColor(task.status);
   const displayTitle = task.title || task.category || "Service Request";
-  const displayDate = task.dateTime || new Date(task.createdAt).toLocaleString();
-  const displayLocation = (task.location && task.location !== "Voice Request Location") ? task.location : (task.curr_location || "Location info in voice note");
-  
+  const displayDate = new Date(task.createdAt).toLocaleString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+  });
+  const displayLocation = task.curr_location || "Location not provided";
   // --- LIVE IMAGE RESOLUTION ---
   // If we successfully fetched the live profile, use that image. Otherwise fallback to the task data.
   const activeVolunteerImg = (!isVolunteer && targetUserProfile?.profileImage) ? targetUserProfile.profileImage : task.volunteerImage;

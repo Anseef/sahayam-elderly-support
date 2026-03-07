@@ -36,8 +36,9 @@ router.post('/register', async (req, res) => {
       phoneNumber,
       pin: hashedPin,
       role,
-      profileImage: null, // Initialize
-      location: null,     // Initialize
+      profileImage: null, 
+      location: null,     
+      accountStatus: role.toLowerCase() === 'volunteer' ? 'pending' : 'approved',
       createdAt: new Date(),
     };
 
@@ -92,7 +93,8 @@ router.post('/login', async (req, res) => {
         role: user.role,
         profileImage: user.profileImage || null, 
         location: user.location || null, 
-        phoneNumber: user.phoneNumber 
+        phoneNumber: user.phoneNumber,
+        accountStatus: user.accountStatus || 'pending' // <-- NEW: Send status back to app
       }
     });
 
@@ -159,6 +161,7 @@ router.put('/profile/:id', async (req, res) => {
     // Remove immutable fields to prevent accidental overwrites
     delete updateData._id; 
     delete updateData.role; 
+    delete updateData.accountStatus; // Prevent users from approving themselves!
 
     // Remove undefined keys so we don't accidentally wipe data
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);

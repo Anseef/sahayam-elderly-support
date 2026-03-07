@@ -222,9 +222,15 @@ export default function VolunteerDashboard({ navigation }) {
               <Text style={[styles.cardTitle, isHistory && styles.textHistory, isActiveEmergency && { color: '#DC2626' }]}>
                 {item.category}
               </Text>
-              <Text style={styles.cardDate}>
-                {formatDateTime(rawDate)}
-              </Text>
+                <Text style={styles.cardDate}>
+                    {new Date(item.createdAt).toLocaleString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric',
+                        hour: 'numeric', 
+                        minute: '2-digit', 
+                        hour12: true 
+                    })}
+                </Text>
             </View>
 
             {/* Status or Action Badge */}
@@ -246,9 +252,7 @@ export default function VolunteerDashboard({ navigation }) {
           <View style={styles.cardFooter}>
               <Ionicons name="location-outline" size={14} color="#64748B" />
               <Text style={styles.locationText} numberOfLines={1}>
-                  {item.location && item.location !== "Voice Request Location" && item.location !== "Voice Request" 
-                     ? item.location 
-                     : (item.curr_location || "Voice Location")}
+                  {item.curr_location || "Location not provided"}
               </Text>
               
               {/* Show "Paid" tag if relevant */}

@@ -32,7 +32,9 @@ export default function VolunteerProfile({ navigation }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [stats, setStats] = useState({ completed: 0, rating: 0 });
+  
+  // Start stats at 0 instead of mocked data
+  const [stats, setStats] = useState({ completed: 0, rating: "0.0" });
 
   // --- FETCH DATA ---
   const fetchProfile = async () => {
@@ -46,21 +48,47 @@ export default function VolunteerProfile({ navigation }) {
       const userId = parsedUser.id || parsedUser._id;
 
       // 1. Fetch User Details
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${userId}`);
-      const userData = await response.json();
+      const userRes = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${userId}`);
+      const userData = await userRes.json();
 
-      if (response.ok) {
+      if (userRes.ok) {
         setUser(userData);
       } else {
         setUser(parsedUser);
       }
 
-      // 2. Fetch Volunteer Stats (Mocked for now)
-      setStats({ completed: 12, rating: 4.8 }); 
+      // 2. Fetch Tasks to Calculate Real Stats
+      const tasksRes = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/all`);
+      
+      if (tasksRes.ok) {
+          const allTasks = await tasksRes.json();
+          
+          // Ensure ID is a string for accurate matching
+          const targetId = String(userId);
+
+          // Find completed tasks for this volunteer
+          const volunteerTasks = allTasks.filter(t => {
+             return t.status === 'Completed' && t.volunteerId && String(t.volunteerId) === targetId;
+          });
+          
+          const completedCount = volunteerTasks.length;
+
+          // Calculate average rating
+          const ratedTasks = volunteerTasks.filter(t => t.rating && Number(t.rating) > 0);
+          let avgRating = "0.0";
+          
+          if (ratedTasks.length > 0) {
+              const sum = ratedTasks.reduce((acc, curr) => acc + Number(curr.rating), 0);
+              avgRating = (sum / ratedTasks.length).toFixed(1);
+          }
+
+          // Update real stats!
+          setStats({ completed: completedCount, rating: avgRating });
+      }
 
     } catch (error) {
       console.error("Profile Error:", error);
-      Alert.alert("Error", "Could not load profile.");
+      Alert.alert("Error", "Could not load profile data.");
     } finally {
       setLoading(false);
     }
@@ -74,20 +102,18 @@ export default function VolunteerProfile({ navigation }) {
 
   // --- HANDLE IMAGE PICKER & UPLOAD ---
   const handlePickImage = async () => {
-    // 1. Request Permission
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (permissionResult.granted === false) {
       Alert.alert("Permission Required", "You need to grant camera roll permissions to change your profile picture.");
       return;
     }
 
-    // 2. Launch Picker
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.5,
-      base64: true, // We need base64 to send to backend easily
+      base64: true, 
     });
 
     if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -108,10 +134,8 @@ export default function VolunteerProfile({ navigation }) {
           });
 
           if (response.ok) {
-              // Update local state immediately so UI refreshes
               setUser(prev => ({ ...prev, profileImage: base64String }));
               
-              // Also update AsyncStorage so next login keeps the image
               const storedUser = await AsyncStorage.getItem('user');
               if (storedUser) {
                   const parsed = JSON.parse(storedUser);
@@ -191,7 +215,6 @@ export default function VolunteerProfile({ navigation }) {
             </View>
           )}
           
-          {/* Loading Spinner or Camera Icon Overlay */}
           {uploadingImage ? (
               <View style={styles.avatarOverlay}>
                   <ActivityIndicator size="small" color="#FFF" />
@@ -210,7 +233,7 @@ export default function VolunteerProfile({ navigation }) {
           <Text style={styles.roleText}>Verified Volunteer</Text>
         </View>
 
-        {/* --- STATS ROW --- */}
+        {/* --- DYNAMIC STATS ROW --- */}
         <View style={styles.statsRow}>
           <View style={styles.statItem}>
             <Text style={styles.statValue}>{stats.completed}</Text>
@@ -321,7 +344,7 @@ const styles = StyleSheet.create({
   profileCard: {
     backgroundColor: '#FFF',
     marginHorizontal: 24,
-    marginTop: -80, // Overlaps header
+    marginTop: -80, 
     borderRadius: 24,
     padding: 24,
     alignItems: 'center',

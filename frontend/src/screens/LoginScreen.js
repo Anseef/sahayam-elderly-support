@@ -43,10 +43,24 @@ export default function LoginScreen({ navigation }) {
 
       if (response.ok) {
         await AsyncStorage.setItem('user', JSON.stringify(data.user));
-        const userRole = data.user.role;
-        if (userRole === 'volunteer') navigation.replace('VolunteerDashboard');
-        else if (userRole === 'admin') navigation.replace('AdminDashboard');
-        else navigation.replace('MainTabs'); 
+        
+        // Normalize role to lowercase to avoid case-sensitivity bugs
+        const userRole = data.user.role?.toLowerCase();
+        const accountStatus = data.user.accountStatus;
+
+        // --- NEW ROUTING LOGIC WITH ADMIN & VERIFICATION CHECK ---
+        if (userRole === 'admin') {
+            navigation.replace('AdminDashboard');
+        } else if (accountStatus === 'rejected') {
+            navigation.replace('RejectedScreen');
+        } else if (accountStatus === 'pending') {
+            navigation.replace('PendingApprovalScreen'); 
+        } else if (userRole === 'volunteer') {
+            navigation.replace('VolunteerDashboard');
+        } else {
+            navigation.replace('MainTabs'); // Approved Elderly User
+        }
+
       } else {
         Alert.alert("Login Failed", data.message || "Invalid credentials");
       }

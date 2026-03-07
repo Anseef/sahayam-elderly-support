@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function RegisterScreen({ navigation }) {
   const [name, setName] = useState('');
@@ -32,13 +33,11 @@ const handleRegister = async () => {
 
     try {
       // 2. API Call to Backend
-      // REPLACE 'YOUR_IP_ADDRESS' below with your actual IPv4 Address (e.g., 192.168.1.5)
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/user/register`, {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        // 3. Map frontend state to backend expected keys
         body: JSON.stringify({
           fullName: name,
           aadhaarNumber: aadhaar,
@@ -52,19 +51,35 @@ const handleRegister = async () => {
 
       // 4. Handle Response
       if (response.ok) {
-        Alert.alert("Success", "Account created successfully!", [
-          { 
-            text: "Login Now", 
-            onPress: () => navigation.replace('Login') 
-          }
-        ]);
+        await AsyncStorage.removeItem('user');
+
+        if (role === 'volunteer') {
+          Alert.alert(
+            "Step 1 Complete", 
+            "Your account is created. Please upload your identity documents to proceed.", 
+            [
+              { 
+                text: "Continue", 
+                // Pass the insertedId to the KYC screen
+                onPress: () => navigation.replace('KYCUploadScreen', { userId: data.userId }) 
+              }
+            ]
+          );
+        } else {
+          Alert.alert(
+            "Account Created", 
+            "Welcome to Sahayam! Please log in to continue.", 
+            [
+              { text: "Log In", onPress: () => navigation.replace('Login') }
+            ]
+          );
+        }
       } else {
-        // Show error message from backend (e.g., "Phone already registered")
         Alert.alert("Registration Failed", data.message || "Something went wrong.");
       }
     } catch (error) {
       console.error("Registration Error:", error);
-      Alert.alert("Network Error", "Could not connect to the server. Check your IP address.");
+      Alert.alert("Network Error", "Could not connect to the server.");
     }
   };
 

@@ -10,39 +10,37 @@ const { ObjectId } = require('mongodb');
 router.post('/create_request', async (req, res) => {
   try {
     const db = getDb();
-    const { 
-      requesterId, requesterName, inputMode, category,
-      location, curr_location, dateTime, notes, 
-      voiceUri, isPaid, paymentAmount,
-      requesterImage 
-    } = req.body;
+    const payload = req.body;
 
-    if (!requesterId || !category) {
-      return res.status(400).json({ message: 'Missing fields.' });
+    if (!payload.requesterId || !payload.category) {
+      return res.status(400).json({ message: 'Missing required fields.' });
     }
 
+    // Fetch the requester's actual profile image from the users collection
+    const user = await db.collection('users').findOne({ _id: new ObjectId(payload.requesterId) });
+
     const newRequest = {
-      requesterId,
-      requesterName,
-      requesterImage: requesterImage || null, 
-      category,
-      inputMode,
+      requesterId: payload.requesterId,
+      requesterName: payload.requesterName,
+      requesterImage: user?.profileImage || payload.requesterImage || null, // Best fallback
+      category: payload.category,
+      inputMode: payload.inputMode,
       status: 'Pending',
       createdAt: new Date(),
-      location: location || null,
-      curr_location: curr_location || null,
-      dateTime: dateTime || null,
-      notes: notes || null,
-      voiceNote: (inputMode === 'voice' && voiceUri) ? voiceUri : null, 
-      isPaid: isPaid || false,
-      paymentAmount: isPaid ? paymentAmount : 0,
+      location: payload.location || null,
+      curr_location: payload.curr_location || null,
+      dateTime: payload.dateTime || null,
+      notes: payload.notes || null,
+      voiceNote: (payload.inputMode === 'voice' && payload.voiceUri) ? payload.voiceUri : null, 
+      isPaid: payload.isPaid || false,
+      paymentAmount: payload.isPaid ? payload.paymentAmount : 0,
       volunteerId: null,
       volunteerName: null,
-      volunteerImage: null // Initialize as null
+      volunteerImage: null 
     };
 
     const result = await db.collection('requests').insertOne(newRequest);
-    res.status(201).json({ message: 'Saved!', requestId: result.insertedId });
+    res.status(201).json({ message: 'Request created!', requestId: result.insertedId });
 
   } catch (err) {
     console.error("Save Error:", err);
@@ -88,7 +86,18 @@ router.delete('/delete/:requestId', async (req, res) => {
 //            VOLUNTEER DATA ROUTES
 // ==========================================
 
-// --- 4. GET AVAILABLE REQUESTS (Feed) ---
+// --- 4. GET ALL REQUESTS (Added for Volunteer Profile Stats) ---
+router.get('/all', async (req, res) => {
+  try {
+    const db = getDb();
+    const requests = await db.collection('requests').find().sort({ createdAt: -1 }).toArray();
+    res.json(requests);
+  } catch (err) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// --- 5. GET AVAILABLE REQUESTS (Feed) ---
 router.get('/available', async (req, res) => {
   try {
     const db = getDb();
@@ -102,7 +111,7 @@ router.get('/available', async (req, res) => {
   }
 });
 
-// --- 5. GET VOLUNTEER TASKS (My Tasks) ---
+// --- 6. GET VOLUNTEER TASKS (My Tasks) ---
 router.get('/volunteer/:volunteerId', async (req, res) => {
   try {
     const db = getDb();
@@ -125,12 +134,12 @@ router.get('/volunteer/:volunteerId', async (req, res) => {
 //           VOLUNTEER ACTIONS (UPDATES)
 // ==========================================
 
-// --- 6. ACCEPT REQUEST ---
+// --- 7. ACCEPT REQUEST ---
 router.put('/accept/:requestId', async (req, res) => {
   try {
     const db = getDb();
     const { requestId } = req.params;
-    const { volunteerId, volunteerName, volunteerImage } = req.body; // Added volunteerImage
+    const { volunteerId, volunteerName, volunteerImage } = req.body; 
 
     if (!ObjectId.isValid(requestId)) return res.status(400).json({ message: 'Invalid ID' });
 
@@ -141,7 +150,7 @@ router.put('/accept/:requestId', async (req, res) => {
           status: 'Accepted',
           volunteerId,
           volunteerName,
-          volunteerImage: volunteerImage || null, // Save Image URL
+          volunteerImage: volunteerImage || null,
           updatedAt: new Date()
         } 
       }
@@ -156,12 +165,12 @@ router.put('/accept/:requestId', async (req, res) => {
   }
 });
 
-// --- 7. COMPLETE REQUEST (Volunteer) ---
+// --- 8. COMPLETE REQUEST (Volunteer) ---
 router.put('/complete/:requestId', async (req, res) => {
   try {
     const db = getDb();
     const { requestId } = req.params;
-    const { completionNote } = req.body; // <-- Extract the note
+    const { completionNote } = req.body; 
 
     if (!ObjectId.isValid(requestId)) return res.status(400).json({ message: 'Invalid ID' });
 
@@ -170,7 +179,7 @@ router.put('/complete/:requestId', async (req, res) => {
       { 
         $set: { 
           status: 'Completed', 
-          completionNote: completionNote || null, // <-- Save the note
+          completionNote: completionNote || null,
           updatedAt: new Date() 
         } 
       }
@@ -184,55 +193,13 @@ router.put('/complete/:requestId', async (req, res) => {
   }
 });
 
-// --- 8. SUBMIT REVIEW (Elderly) ---
-router.put('/review/:requestId', async (req, res) => {
-  try {
-    const db = getDb();
-    const { requestId } = req.params;
-    const { rating, feedback } = req.body;
-
-    if (!ObjectId.isValid(requestId)) {
-      return res.status(400).json({ message: 'Invalid Request ID' });
-    }
-
-    if (!rating || rating < 1 || rating > 5) {
-        return res.status(400).json({ message: 'Valid rating (1-5) is required.'});
-    }
-
-    const result = await db.collection('requests').updateOne(
-      { _id: new ObjectId(requestId) },
-      { 
-        $set: { 
-          rating: rating,
-          feedback: feedback || null,
-          isReviewed: true, // Flag to show it's been reviewed
-          reviewedAt: new Date() 
-        } 
-      }
-    );
-
-    if (result.modifiedCount === 0) {
-      return res.status(404).json({ message: 'Request not found' });
-    }
-
-    // Optional: You could also update the volunteer's average rating here
-
-    res.json({ message: 'Review submitted successfully!' });
-  } catch (err) {
-    console.error("Review Error:", err);
-    res.status(500).json({ message: 'Server Error' });
-  }
-});
-
-
+// --- 9. DROP TASK (Volunteer) ---
 router.put('/drop/:id', async (req, res) => {
   try {
     const db = getDb();
     const { id } = req.params;
 
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid request ID' });
-    }
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid request ID' });
 
     const result = await db.collection('requests').updateOne(
       { _id: new ObjectId(id) },
@@ -246,10 +213,7 @@ router.put('/drop/:id', async (req, res) => {
       }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: 'Request not found' });
-    }
-
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'Request not found' });
     res.json({ message: 'Task dropped and returned to open feed.' });
   } catch (err) {
     console.error("Drop Task Error:", err);
@@ -257,27 +221,57 @@ router.put('/drop/:id', async (req, res) => {
   }
 });
 
-// --- CREATE REQUEST (Elderly user) ---
-router.post('/create_request', async (req, res) => {
+// --- 10. SUBMIT REVIEW AND RATING (Elderly) ---
+router.put('/review/:id', async (req, res) => {
   try {
     const db = getDb();
-    const payload = req.body;
+    const { id } = req.params;
+    const { rating, feedback } = req.body;
 
-    // --- NEW: Fetch the requester's actual profile image ---
-    const user = await db.collection('users').findOne({ _id: new ObjectId(payload.requesterId) });
-    
-    const newRequest = {
-      ...payload,
-      requesterImage: user?.profileImage || null,
-      status: 'Pending',
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid Request ID' });
+
+    const result = await db.collection('requests').updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $set: { 
+          rating: Number(rating), 
+          feedback: feedback,
+          isReviewed: true 
+        } 
+      }
+    );
+
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'Task not found' });
+    res.json({ message: 'Review submitted successfully' });
+
+  } catch (err) {
+    console.error("Review Error:", err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// --- 11. SUBMIT A REPORT / COMPLAINT ---
+router.post('/report/:taskId', async (req, res) => {
+  try {
+    const db = getDb();
+    const { taskId } = req.params;
+    const { reportedBy, reporterName, reporterRole, issue, taskTitle } = req.body;
+
+    const newReport = {
+      taskId: new ObjectId(taskId),
+      taskTitle,
+      reportedBy: new ObjectId(reportedBy),
+      reporterName,
+      reporterRole,
+      issue,
+      status: 'Unresolved',
       createdAt: new Date()
     };
-    console.log(requesterImage);
 
-    const result = await db.collection('requests').insertOne(newRequest);
-    res.status(201).json({ message: 'Request created', requestId: result.insertedId });
+    await db.collection('reports').insertOne(newReport);
+    res.status(201).json({ message: 'Report submitted successfully' });
   } catch (err) {
-    console.error(err);
+    console.error("Report Error:", err);
     res.status(500).json({ message: 'Server Error' });
   }
 });

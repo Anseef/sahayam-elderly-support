@@ -91,9 +91,18 @@ export default function ElderlyDashboard({ navigation }) {
           <View style={styles.cardHeader}>
             <View style={[styles.iconBox, isHistory && styles.iconBoxCompleted]}>
               <FontAwesome5 
-                name={item.category === "Health" ? "heartbeat" : (item.category === "Transport" ? "car" : "shopping-basket")} 
+                name={
+                  item.category === "Health" ? "heartbeat" : 
+                  item.category === "Transport" ? "car" : 
+                  item.category === "Emergency" ? "exclamation-triangle" : // ADDED EMERGENCY ICON
+                  "shopping-basket" // Default for Groceries/Others
+                } 
                 size={22} 
-                color={isHistory ? "#94A3B8" : "#007EA7"} 
+                color={
+                  isHistory ? "#94A3B8" : 
+                  item.category === "Emergency" ? "#007EA7" : // Make Emergency icon red
+                  "#007EA7"
+                } 
               />
             </View>
             
@@ -103,10 +112,13 @@ export default function ElderlyDashboard({ navigation }) {
               </Text>
               
               <Text style={styles.taskDate}>
-                {item.dateTime 
-                  ? item.dateTime 
-                  : new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                }
+                {new Date(item.createdAt).toLocaleString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric',
+                    hour: 'numeric', 
+                    minute: '2-digit', 
+                    hour12: true 
+                })}
               </Text>
             </View>
 
@@ -123,7 +135,7 @@ export default function ElderlyDashboard({ navigation }) {
               <View style={styles.locationBadge}>
                 <Ionicons name="location-sharp" size={14} color="#64748B" />
                 <Text style={styles.locationText} numberOfLines={1}>
-                  {item.location || "View details for location"}
+                  {item.curr_location || "View details for location"}
                 </Text>
               </View>
               <MaterialIcons name="chevron-right" size={20} color="#CBD5E1" />

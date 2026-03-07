@@ -25,6 +25,14 @@ import PublicProfileScreen from './src/screens/PublicProfileScreen';
 import EditVolunteerProfile from './src/screens/EditVolunteerProfile';
 import VolunteerEmergencyScreen from './src/screens/VolunteerEmergencyScreen';
 
+
+import AdminDashboard from './src/screens/AdminDashboard';
+import PendingApprovalScreen from './src/screens/PendingApprovalScreen';
+import RejectedScreen from './src/screens/RrejectedScreen';
+import KYCUploadScreen from './src/screens/KYCUploadScreen';
+
+
+
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
@@ -110,7 +118,9 @@ export default function App() {
 
         {/* Auth */}
         <Stack.Screen name="Login" component={LoginScreen} /> 
-        <Stack.Screen name="Register" component={RegisterScreen} /> 
+        <Stack.Screen name="Register" component={RegisterScreen} />
+        <Stack.Screen name='PendingApprovalScreen' component={PendingApprovalScreen} />
+        <Stack.Screen name='RejectedScreen' component={RejectedScreen} />
 
         {/* Elderly Flow */}
         <Stack.Screen name="MainTabs" component={MainTabs} />
@@ -133,7 +143,8 @@ export default function App() {
             component={VolunteerEmergencyScreen} 
             options={{ presentation: 'modal' }} // Makes it slide up like an urgent alert!
         />
-
+        <Stack.Screen name="AdminDashboard" component={AdminDashboard} options={{ headerShown: false }} />
+        <Stack.Screen name="KYCUploadScreen" component={KYCUploadScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
