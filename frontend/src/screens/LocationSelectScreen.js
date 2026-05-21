@@ -1,53 +1,154 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-  FlatList,
-  Keyboard,
-  Dimensions,
-  TouchableWithoutFeedback
+  View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView,
+  Alert, ActivityIndicator, FlatList, Keyboard, Dimensions,
+  TouchableWithoutFeedback, Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 
+// --- HELPER FUNCTION TO FILTER LOCATION ---
+const formatShortAddress = (fullAddress) => {
+  if (!fullAddress) return '';
+  const parts = fullAddress.split(',').map(part => part.trim());
+  const filteredParts = parts.filter(part => !/^\d+$/.test(part) && part.toLowerCase() !== 'india');
+  
+  if (filteredParts.length >= 2) {
+    return `${filteredParts[filteredParts.length - 2]}, ${filteredParts[filteredParts.length - 1]}`;
+  } else if (filteredParts.length === 1) {
+    return filteredParts[0];
+  }
+  return fullAddress; 
+};
+
 export default function LocationSelectScreen({ navigation }) {
 
-  const [loading, setLoading] = useState(false);
-  const [currentAddress, setCurrentAddress] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [currentAddress, setCurrentAddress] = useState(null); // The currently active short location
   const [searchText, setSearchText] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-
-  const [savedAddresses, setSavedAddresses] = useState([
-    { 
-      id: '1', 
-      label: 'Home', 
-      address: 'Mangottu House, Kumbazha Road, Pathanamthitta, Kerala', 
-      icon: 'home', 
-      iconColor: '#475569', 
-      iconBg: '#F1F5F9' 
-    },
-    { 
-      id: '2', 
-      label: 'City Hospital', 
-      address: 'General Hospital Road, Pathanamthitta', 
-      icon: 'hospital', 
-      iconColor: '#166534', 
-      iconBg: '#F0FDF4' 
-    }
-  ]);
-
+  const [savedAddresses, setSavedAddresses] = useState([]);
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [userId, setUserId] = useState(null);
 
+  // --- MODAL STATES FOR ADD/EDIT ---
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [formLabel, setFormLabel] = useState('');
+  const [formAddress, setFormAddress] = useState('');
+
+  // --- FETCH INITIAL DATA ---
+  const fetchUserData = async () => {
+    try {
+        const storedUser = await AsyncStorage.getItem('user');
+        if (!storedUser) return;
+        const parsedUser = JSON.parse(storedUser);
+        const uId = parsedUser.id || parsedUser._id;
+        setUserId(uId);
+
+        const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${uId}`);
+        if (response.ok) {
+            const userData = await response.json();
+            setCurrentAddress(userData.location || null);
+
+            if (userData.savedAddresses && userData.savedAddresses.length > 0) {
+                setSavedAddresses(userData.savedAddresses);
+            } else {
+                setSavedAddresses([]); 
+            }
+        }
+    } catch (error) {
+        console.error("Error fetching user data:", error);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  useFocusEffect(useCallback(() => { fetchUserData(); }, []));
+
+  // --- DATABASE UPDATE LOGIC ---
+  const saveToDB = async (newActiveShortLocation, newAddressArray) => {
+    try {
+      if (!userId) return;
+
+      const payload = {};
+      if (newActiveShortLocation) payload.location = newActiveShortLocation; // Updates Home screen header
+      if (newAddressArray) payload.savedAddresses = newAddressArray;
+
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload) 
+      });
+
+      if (response.ok) {
+        if (newActiveShortLocation) {
+            const storedUser = await AsyncStorage.getItem('user');
+            const parsedUser = JSON.parse(storedUser);
+            parsedUser.location = newActiveShortLocation;
+            await AsyncStorage.setItem('user', JSON.stringify(parsedUser));
+        }
+      }
+    } catch (error) {
+      console.error("Failed to sync with DB:", error);
+    }
+  };
+
+  const getIconForLabel = (label) => {
+      const lowerLabel = label.toLowerCase();
+      if (lowerLabel.includes('home')) return { icon: 'home', iconColor: '#475569', iconBg: '#F1F5F9' };
+      if (lowerLabel.includes('hospital') || lowerLabel.includes('clinic')) return { icon: 'hospital', iconColor: '#166534', iconBg: '#F0FDF4' };
+      if (lowerLabel.includes('work') || lowerLabel.includes('office')) return { icon: 'briefcase', iconColor: '#9333EA', iconBg: '#FAF5FF' };
+      return { icon: 'location', iconColor: '#0369A1', iconBg: '#E0F2FE' };
+  };
+
+  // --- HANDLE MODAL SAVE ---
+  const handleSaveModal = () => {
+      if (!formLabel.trim() || !formAddress.trim()) {
+          Alert.alert("Error", "Please fill in both fields.");
+          return;
+      }
+
+      const shortAddr = formatShortAddress(formAddress);
+      const styleInfo = getIconForLabel(formLabel);
+
+      let updatedArray;
+      if (editingId) {
+          // Edit existing
+          updatedArray = savedAddresses.map(item => 
+              item.id === editingId 
+                  ? { ...item, label: formLabel, fullAddress: formAddress, address: shortAddr, ...styleInfo }
+                  : item
+          );
+      } else {
+          // Add new
+          const newAddressObj = {
+              id: Date.now().toString(),
+              label: formLabel, 
+              address: shortAddr, // The short version for the DB 'location'
+              fullAddress: formAddress, // The long version for the UI list
+              ...styleInfo
+          };
+          updatedArray = [newAddressObj, ...savedAddresses];
+      }
+
+      setSavedAddresses(updatedArray);
+      saveToDB(shortAddr, updatedArray);
+      setCurrentAddress(shortAddr); // Automatically select it
+      
+      setIsModalVisible(false);
+      setEditingId(null);
+      setFormLabel('');
+      setFormAddress('');
+  };
+
+  // --- OTHER ACTIONS ---
   const searchPlaces = async (text) => {
     setSearchText(text);
     if (text.length < 3) { setSuggestions([]); return; }
@@ -60,28 +161,18 @@ export default function LocationSelectScreen({ navigation }) {
   };
 
   const selectSuggestion = (item) => {
-    const address = item.display_name;
+    const fullAddress = item.display_name;
+    const shortAddress = formatShortAddress(fullAddress);
 
-    setSearchText(address);
-    setCurrentAddress(address);
+    setSearchText('');
     setSuggestions([]);
     Keyboard.dismiss();
 
-    setSavedAddresses((prevAddresses) => {
-
-      const filteredAddresses = prevAddresses.filter(addr => addr.label !== 'Current Location');
-
-      const newLocation = {
-        id: 'current_location_id', 
-        label: 'Current Location', 
-        address: address,
-        icon: 'location', 
-        iconColor: '#0369A1',
-        iconBg: '#E0F2FE'
-      };
-
-      return [newLocation, ...filteredAddresses]; 
-    });
+    // Open modal to add a label to this found address
+    setFormAddress(fullAddress);
+    setFormLabel('Recent Location');
+    setEditingId(null);
+    setIsModalVisible(true);
   };
 
   const getCurrentLocation = async () => {
@@ -95,25 +186,12 @@ export default function LocationSelectScreen({ navigation }) {
       
       if (addressResponse.length > 0) {
         let addr = addressResponse[0];
-        const formattedAddress = `${addr.name || ''}, ${addr.street || ''}, ${addr.city}, ${addr.region}`;
+        const fullAddress = `${addr.name || ''}, ${addr.street || ''}, ${addr.city || addr.subregion}, ${addr.region}`.replace(/^, /, ''); // Clean leading comma
         
-        setCurrentAddress(formattedAddress);
-        setSearchText(formattedAddress);
-
-        setSavedAddresses((prevAddresses) => {
-          const filteredAddresses = prevAddresses.filter(addr => addr.label !== 'Current Location');
-
-          const newLocation = {
-            id: 'current_location_id',
-            label: 'Current Location',
-            address: formattedAddress,
-            icon: 'location', 
-            iconColor: '#0369A1',
-            iconBg: '#E0F2FE'
-          };
-          
-          return [newLocation, ...filteredAddresses];
-        });
+        setFormAddress(fullAddress);
+        setFormLabel('Current Location');
+        setEditingId(null);
+        setIsModalVisible(true); // Open modal to confirm/edit before saving
       }
     } catch (error) { 
       Alert.alert("Error", "Could not fetch location."); 
@@ -128,14 +206,30 @@ export default function LocationSelectScreen({ navigation }) {
   const handleDelete = (id) => {
     Alert.alert("Delete Address", "Remove this location?", [
       { text: "Cancel", style: "cancel", onPress: closeMenu },
-      { text: "Delete", style: 'destructive', onPress: () => { setSavedAddresses(prev => prev.filter(item => item.id !== id)); closeMenu(); } }
+      { text: "Delete", style: 'destructive', onPress: () => { 
+          const filteredArray = savedAddresses.filter(item => item.id !== id);
+          setSavedAddresses(filteredArray); 
+          saveToDB(null, filteredArray); 
+          closeMenu(); 
+      }}
     ]);
   };
 
-  const handleEdit = (id) => {
+  const openEditModal = (item) => {
     closeMenu();
-    Alert.alert("Edit Address", `Edit feature for ID: ${id} coming soon.`);
+    setFormLabel(item.label);
+    setFormAddress(item.fullAddress || item.address); // Fallback to short if full doesn't exist
+    setEditingId(item.id);
+    setIsModalVisible(true);
   };
+
+  if (loading) {
+      return (
+          <SafeAreaView style={[styles.container, {justifyContent: 'center', alignItems: 'center'}]}>
+              <ActivityIndicator size="large" color="#007EA7" />
+          </SafeAreaView>
+      )
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -196,7 +290,7 @@ export default function LocationSelectScreen({ navigation }) {
                 <Text style={[styles.actionText, {color: '#0369A1'}]}>Use Current{'\n'}Location</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.actionCard, {backgroundColor: '#FFF7ED'}]} activeOpacity={0.8}>
+              <TouchableOpacity style={[styles.actionCard, {backgroundColor: '#FFF7ED'}]} onPress={() => { setFormLabel(''); setFormAddress(''); setEditingId(null); setIsModalVisible(true); }} activeOpacity={0.8}>
                 <View style={[styles.iconCircle, {backgroundColor: '#FFF'}]}><Ionicons name="add" size={24} color="#EA580C" /></View>
                 <Text style={[styles.actionText, {color: '#C2410C'}]}>Add New{'\n'}Address</Text>
               </TouchableOpacity>
@@ -217,11 +311,11 @@ export default function LocationSelectScreen({ navigation }) {
                     activeOpacity={0.9}
                     onPress={() => {
                       setCurrentAddress(item.address);
+                      saveToDB(item.address, null); 
                       closeMenu();
                     }}
                   >
                     <View style={[styles.addressIconContainer, { backgroundColor: item.iconBg }]}>
-                      {/* FIX: Check for 'location' icon name */}
                       {item.icon === 'home' || item.icon === 'location' ? (
                         <Ionicons name={item.icon} size={20} color={item.iconColor} />
                       ) : (
@@ -238,7 +332,8 @@ export default function LocationSelectScreen({ navigation }) {
                           </View>
                         )}
                       </View>
-                      <Text style={styles.addressText} numberOfLines={2}>{item.address}</Text>
+                      {/* SHOW FULL ADDRESS IN THE LIST */}
+                      <Text style={styles.addressText} numberOfLines={2}>{item.fullAddress || item.address}</Text>
                     </View>
                     
                     <TouchableOpacity style={styles.menuTrigger} onPress={() => toggleMenu(item.id)}>
@@ -249,7 +344,7 @@ export default function LocationSelectScreen({ navigation }) {
                   {/* Menu Dropdown */}
                   {openMenuId === item.id && (
                     <View style={styles.menuDropdown}>
-                      <TouchableOpacity style={styles.menuItem} onPress={() => handleEdit(item.id)}>
+                      <TouchableOpacity style={styles.menuItem} onPress={() => openEditModal(item)}>
                         <Ionicons name="create-outline" size={18} color="#475569" />
                         <Text style={styles.menuText}>Edit</Text>
                       </TouchableOpacity>
@@ -268,6 +363,43 @@ export default function LocationSelectScreen({ navigation }) {
           </View>
         </View>
       </TouchableWithoutFeedback>
+
+      {/* --- ADD / EDIT ADDRESS MODAL --- */}
+      <Modal visible={isModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>{editingId ? "Edit Address" : "Save New Address"}</Text>
+                    <TouchableOpacity onPress={() => setIsModalVisible(false)}>
+                        <Ionicons name="close" size={24} color="#64748B" />
+                    </TouchableOpacity>
+                </View>
+
+                <Text style={styles.inputLabel}>Label (e.g. Home, Office)</Text>
+                <TextInput 
+                    style={styles.modalInput}
+                    value={formLabel}
+                    onChangeText={setFormLabel}
+                    placeholder="Enter label"
+                />
+
+                <Text style={styles.inputLabel}>Full Address</Text>
+                <TextInput 
+                    style={[styles.modalInput, styles.textArea]}
+                    value={formAddress}
+                    onChangeText={setFormAddress}
+                    placeholder="Enter full address details"
+                    multiline
+                    numberOfLines={3}
+                />
+
+                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveModal}>
+                    <Text style={styles.saveBtnText}>Save Location</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -305,5 +437,16 @@ const styles = StyleSheet.create({
   menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, gap: 10 },
   menuText: { fontSize: 14, fontWeight: '600', color: '#475569' },
   menuDivider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 10 },
-  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 20, fontStyle: 'italic' }
+  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 20, fontStyle: 'italic' },
+  
+  // Modal Styles
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { width: '85%', backgroundColor: '#FFF', borderRadius: 24, padding: 24, shadowColor: '#000', shadowOffset: {width:0, height:4}, shadowOpacity: 0.1, elevation: 10 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B' },
+  inputLabel: { fontSize: 13, fontWeight: '700', color: '#64748B', marginBottom: 8, marginLeft: 4 },
+  modalInput: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 14, fontSize: 15, color: '#1E293B', marginBottom: 20 },
+  textArea: { height: 100, textAlignVertical: 'top' },
+  saveBtn: { backgroundColor: '#007EA7', padding: 16, borderRadius: 16, alignItems: 'center', marginTop: 10 },
+  saveBtnText: { color: '#FFF', fontWeight: '800', fontSize: 16 }
 });

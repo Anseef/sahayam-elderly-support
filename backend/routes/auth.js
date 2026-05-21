@@ -38,7 +38,7 @@ router.post('/register', async (req, res) => {
       role,
       profileImage: null, 
       location: null,     
-      accountStatus: role.toLowerCase() === 'volunteer' ? 'pending' : 'approved',
+      accountStatus: 'pending',
       createdAt: new Date(),
     };
 
@@ -148,7 +148,7 @@ router.put('/contacts/:userId', async (req, res) => {
   }
 });
 
-// --- GENERIC UPDATE USER PROFILE (Used for image, basic details, and elderly details) ---
+// --- GENERIC UPDATE USER PROFILE ---
 router.put('/profile/:id', async (req, res) => {
   try {
     const db = getDb();
@@ -161,7 +161,12 @@ router.put('/profile/:id', async (req, res) => {
     // Remove immutable fields to prevent accidental overwrites
     delete updateData._id; 
     delete updateData.role; 
-    delete updateData.accountStatus; // Prevent users from approving themselves!
+    delete updateData.accountStatus;
+
+    // Handle array updates specifically for saved addresses
+    if (req.body.savedAddresses) {
+        updateData.savedAddresses = req.body.savedAddresses;
+    }
 
     // Remove undefined keys so we don't accidentally wipe data
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
@@ -181,5 +186,4 @@ router.put('/profile/:id', async (req, res) => {
     res.status(500).json({ message: 'Server Error' });
   }
 });
-
 module.exports = router;

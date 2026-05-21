@@ -144,14 +144,20 @@ export default function AddServiceScreen({ navigation }) {
       const user = JSON.parse(storedUser);
 
       // --- 1. GET CURRENT LOCATION & REVERSE GEOCODE ---
-      // This runs for BOTH Voice Mode and Text Mode
+      // We now explicitly extract and store latitude and longitude
       let curr_location = "Location not detected"; 
+      let lat = null;
+      let lng = null;
+
       try {
         let { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         
+        lat = coords.latitude;
+        lng = coords.longitude;
+
         let addressResponse = await Location.reverseGeocodeAsync({
-          latitude: coords.latitude,
-          longitude: coords.longitude
+          latitude: lat,
+          longitude: lng
         });
 
         if (addressResponse.length > 0) {
@@ -193,7 +199,9 @@ export default function AddServiceScreen({ navigation }) {
         voiceUri: finalVoiceData,
         isPaid,
         paymentAmount,
-        curr_location // Pass the strict GPS address in both modes
+        curr_location, // String representation of GPS
+        latitude: lat, // <-- NEW: Exact latitude
+        longitude: lng // <-- NEW: Exact longitude
       };
 
       const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/create_request`, {
@@ -373,6 +381,7 @@ export default function AddServiceScreen({ navigation }) {
 
           <View style={{height: 20}} />
 
+          {/* SUBMIT BUTTON MOVED TO BOTTOM */}
           <TouchableOpacity 
             style={[styles.submitButton, submitting && {opacity: 0.7}]} 
             onPress={handleSubmit} 

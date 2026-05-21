@@ -92,16 +92,59 @@ router.get('/all-volunteers', async (req, res) => {
     res.json(volunteers);
   } catch (err) { res.status(500).json({ message: 'Server Error' }); }
 });
+// GET ALL ACTIVE ELDERLY USERS
+router.get('/all-elderly', async (req, res) => {
+  try {
+    const db = getDb();
+    const elderly = await db.collection('users')
+      .find({ role: 'elderly', accountStatus: 'approved' })
+      .toArray();
+    res.json(elderly);
+  } catch (err) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
 
-// --- BAN / DELETE USER ---
+// --- BAN USER (UPDATE STATUS TO TERMINATED) ---
 router.delete('/delete-user/:id', async (req, res) => {
   try {
     const db = getDb();
-    await db.collection('users').deleteOne({ _id: new ObjectId(req.params.id) });
-    res.json({ message: 'User deleted successfully' });
-  } catch (err) { res.status(500).json({ message: 'Server Error' }); }
+    const result = await db.collection('users').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { accountStatus: 'terminated' } }
+    );
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: 'User banned successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server Error' });
+  }
 });
 
+// --- UNBAN USER (RESTORE STATUS TO APPROVED) ---
+router.put('/unban-user/:id', async (req, res) => {
+  try {
+    const db = getDb();
+    const result = await db.collection('users').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { accountStatus: 'approved' } }
+    );
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: 'User unbanned successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// --- GET ALL BANNED USERS ---
+router.get('/banned-users', async (req, res) => {
+  try {
+    const db = getDb();
+    const bannedUsers = await db.collection('users').find({ accountStatus: 'terminated' }).toArray();
+    res.json(bannedUsers);
+  } catch (err) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
 // --- MARK REPORT AS RESOLVED ---
 router.put('/resolve-report/:id', async (req, res) => {
   try {

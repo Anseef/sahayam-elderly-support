@@ -12,7 +12,8 @@ import {
   Dimensions,
   ActivityIndicator,
   Image,
-  Linking
+  Linking,
+  Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, MaterialIcons } from '@expo/vector-icons';
@@ -51,6 +52,11 @@ export default function ServiceDetailScreen({ route, navigation }) {
   // --- COMPLETION STATE ---
   const [showCompletionForm, setShowCompletionForm] = useState(false);
   const [completionNote, setCompletionNote] = useState('');
+
+  // --- NEW PAYMENT STATES ---
+  const [showRazorpay, setShowRazorpay] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('UPI');
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   if (!task) return (
     <SafeAreaView style={styles.container}><Text>No details found.</Text></SafeAreaView>
@@ -180,21 +186,28 @@ export default function ServiceDetailScreen({ route, navigation }) {
   const handleDropTask = () => {
     Alert.alert(
       "Drop Task", 
-      "Are you sure you cannot complete this task? It will be returned to the open feed for other volunteers.", 
+      "Are you sure you cannot complete this task? You can only drop a maximum of 5 tasks per month.", 
       [
         { text: "No, keep it", style: "cancel" },
         { text: "Yes, Drop Task", style: 'destructive', onPress: async () => {
+            if (!currentUser) return;
             setLoading(true);
             try {
                 const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/drop/${task._id}`, { 
-                  method: 'PUT' 
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ volunteerId: currentUser.id || currentUser._id })
                 });
+
+                const data = await response.json();
 
                 if (response.ok) {
                   Alert.alert("Task Dropped", "The request has been sent back to the open feed.");
                   navigation.navigate('VolunteerDashboard');
+                } else if (response.status === 403) {
+                  Alert.alert("Limit Reached", data.message || "You have reached your monthly limit of 10 dropped tasks.");
                 } else {
-                  Alert.alert("Error", "Could not drop the request.");
+                  Alert.alert("Error", data.message || "Could not drop the request.");
                 }
             } catch(e) { 
                 Alert.alert("Network Error", "Check your connection.");
@@ -274,6 +287,77 @@ export default function ServiceDetailScreen({ route, navigation }) {
     }
   };
 
+  // --- NEW MAP NAVIGATION ---
+  const handleOpenMap = () => {
+      // Check if we have EITHER coordinates OR a text location
+      if (!task || (!task.curr_location && (!task.latitude || !task.longitude))) {
+          Alert.alert("Location Error", "No location data provided for this task.");
+          return;
+      }
+
+      let mapUrl = '';
+
+      // 1. If we have exact GPS coordinates
+      if (task.latitude && task.longitude) {
+          if (Platform.OS === 'ios') {
+              mapUrl = `http://maps.apple.com/?daddr=${task.latitude},${task.longitude}&dirflg=d`; 
+          } else {
+              mapUrl = `google.navigation:q=${task.latitude},${task.longitude}&mode=d`;
+          }
+      } 
+      // 2. Fallback to using the Text Address (e.g. "Kottayam, Kerala")
+      else {
+          const encodedAddress = encodeURIComponent(task.curr_location);
+          if (Platform.OS === 'ios') {
+              mapUrl = `http://maps.apple.com/?daddr=${encodedAddress}&dirflg=d`;
+          } else {
+              mapUrl = `google.navigation:q=${encodedAddress}&mode=d`;
+          }
+      }
+
+      Linking.canOpenURL(mapUrl)
+          .then((supported) => {
+              if (supported) {
+                  return Linking.openURL(mapUrl);
+              } else {
+                  // Fallback to browser Google Maps
+                  const query = task.latitude ? `${task.latitude},${task.longitude}` : encodeURIComponent(task.curr_location);
+                  const browserUrl = `https://www.google.com/maps/dir/?api=1&destination=${query}`;
+                  return Linking.openURL(browserUrl);
+              }
+          })
+          .catch((err) => Alert.alert("Error", "Could not open the map application."));
+  };
+
+  // --- NEW PAYMENT METHODS ---
+  const handlePayment = () => {
+      setShowRazorpay(true);
+  };
+
+  const processFakePayment = async () => {
+    setIsProcessingPayment(true);
+    
+    setTimeout(async () => {
+        try {
+            const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/requests/pay/${task._id}`, {
+                method: 'PUT'
+            });
+
+            if (response.ok) {
+                setShowRazorpay(false);
+                Alert.alert("Payment Successful!", `₹${task.paymentAmount} has been securely transferred via ${selectedPaymentMethod}.`);
+                setTask(prev => ({ ...prev, paymentStatus: 'Paid' }));
+            } else {
+                Alert.alert("Payment Failed", "Something went wrong.");
+            }
+        } catch (error) {
+            Alert.alert("Network Error", "Could not process payment.");
+        } finally {
+            setIsProcessingPayment(false);
+        }
+    }, 2500); 
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'Completed': return { bg: '#E8F5E9', text: '#2E7D32' };
@@ -292,15 +376,13 @@ export default function ServiceDetailScreen({ route, navigation }) {
       hour12: true 
   });
   const displayLocation = task.curr_location || "Location not provided";
-  // --- LIVE IMAGE RESOLUTION ---
-  // If we successfully fetched the live profile, use that image. Otherwise fallback to the task data.
+  
   const activeVolunteerImg = (!isVolunteer && targetUserProfile?.profileImage) ? targetUserProfile.profileImage : task.volunteerImage;
   const activeRequesterImg = (isVolunteer && targetUserProfile?.profileImage) ? targetUserProfile.profileImage : task.requesterImage;
 
   const volunteerImgUri = formatImageUri(activeVolunteerImg);
   const requesterImgUri = formatImageUri(activeRequesterImg);
   
-  // Safe initial extraction
   const getInitial = (nameStr) => {
       if (!nameStr) return "U";
       return nameStr.charAt(0).toUpperCase();
@@ -354,12 +436,25 @@ export default function ServiceDetailScreen({ route, navigation }) {
                 </View>
                 <Text style={styles.metaText}>{displayDate}</Text>
               </View>
+
               <View style={styles.metaRow}>
                 <View style={styles.metaIconBox}>
                   <Ionicons name="location-outline" size={18} color="#546E7A" />
                 </View>
-                <Text style={styles.metaText} numberOfLines={2}>{displayLocation}</Text>
+                <View style={{ flex: 1 }}>
+                    <Text style={styles.metaText} numberOfLines={2}>{displayLocation}</Text>
+                    
+                    {/* ONLY SHOW NAVIGATION BUTTON TO VOLUNTEER IF TASK IS ACCEPTED OR COMPLETED */}
+                    {isVolunteer && (task.status === 'Accepted' || task.status === 'Completed') && (task.curr_location || task.latitude) && (
+                        <TouchableOpacity style={styles.navigateBtn} onPress={handleOpenMap}>
+                            <Ionicons name="map-outline" size={16} color="#007EA7" />
+                            <Text style={styles.navigateBtnText}>Open in Maps</Text>
+                            <Ionicons name="open-outline" size={14} color="#007EA7" />
+                        </TouchableOpacity>
+                    )}
+                </View>
               </View>
+
               {task.notes && (
                 <View style={styles.notesBox}>
                     <Text style={styles.notesLabel}>Notes:</Text>
@@ -437,7 +532,6 @@ export default function ServiceDetailScreen({ route, navigation }) {
                   <View style={styles.requesterCard}>
                       <TouchableOpacity style={styles.reqLeft} onPress={handleViewProfile} activeOpacity={0.7}>
                           
-                          {/* --- THIS IS WHERE THE IMAGE SHOWS --- */}
                           {requesterImgUri ? (
                               <Image source={{ uri: requesterImgUri }} style={styles.avatarImage} />
                           ) : (
@@ -447,7 +541,6 @@ export default function ServiceDetailScreen({ route, navigation }) {
                                   </Text>
                               </View>
                           )}
-                          {/* --------------------------------------- */}
 
                           <View style={styles.volunteerDetails}>
                               <Text style={styles.volunteerName}>{task.requesterName || "Beneficiary"}</Text>
@@ -467,19 +560,49 @@ export default function ServiceDetailScreen({ route, navigation }) {
           {/* --- FOOTER ACTIONS --- */}
           <View style={styles.footerActions}>
 
-            {/* RATING SECTION */}
-            {task.status === 'Completed' && (
+            {/* PAYMENT SECTION (Only for Elderly, if Paid, and Completed) */}
+            {!isVolunteer && task.status === 'Completed' && task.isPaid && task.paymentStatus !== 'Paid' && (
+                <View style={styles.paymentCard}>
+                    <View style={styles.paymentHeader}>
+                        <Ionicons name="cash" size={28} color="#16A34A" />
+                        <Text style={styles.paymentTitle}>Payment Required</Text>
+                    </View>
+                    <Text style={styles.paymentDesc}>
+                        The volunteer has completed the task. Please release the payment of <Text style={{fontWeight: '800'}}>₹{task.paymentAmount}</Text> to proceed to the review.
+                    </Text>
+                    
+                    <TouchableOpacity style={styles.payBtn} onPress={handlePayment}>
+                        <Text style={styles.payBtnText}>Pay ₹{task.paymentAmount} Securely</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {/* RATING SECTION (Hidden until Paid, or if Free) */}
+            {task.status === 'Completed' && (!task.isPaid || task.paymentStatus === 'Paid') && (
                 <View style={styles.ratingCard}>
+                    {/* Show Paid Success Badge if it was a paid task */}
+                    {task.isPaid && task.paymentStatus === 'Paid' && (
+                        <View style={styles.paidSuccessBadge}>
+                            <Ionicons name="checkmark-circle" size={16} color="#166534" />
+                            <Text style={styles.paidSuccessText}>Payment of ₹{task.paymentAmount} Completed</Text>
+                        </View>
+                    )}
+
                     <Text style={styles.ratingTitle}>
                         {isVolunteer 
                             ? (task.isReviewed ? "Beneficiary's Review" : "Waiting for Review...") 
                             : (task.isReviewed ? "Your Review" : "Rate Service")}
                     </Text>
 
+                    {/* RATING LOGIC FIX: Check if task.isReviewed is false so user can click stars */}
                     {(!isVolunteer || task.isReviewed) && (
                         <View style={styles.starsContainer}>
                             {[1, 2, 3, 4, 5].map(s => (
-                                 <TouchableOpacity key={s} onPress={() => !isVolunteer && !task.isReviewed && setRating(s)} disabled={isVolunteer || task.isReviewed}>
+                                 <TouchableOpacity 
+                                    key={s} 
+                                    onPress={() => !isVolunteer && !task.isReviewed && setRating(s)} 
+                                    disabled={isVolunteer || task.isReviewed}
+                                >
                                      <FontAwesome name={s <= rating ? "star" : "star-o"} size={36} color="#FFC107" style={{marginHorizontal: 4}}/>
                                  </TouchableOpacity>
                             ))}
@@ -608,6 +731,82 @@ export default function ServiceDetailScreen({ route, navigation }) {
           <View style={{height: 30}} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* --- FAKE RAZORPAY MODAL --- */}
+      <Modal visible={showRazorpay} animationType="slide" transparent>
+        <View style={styles.rzpOverlay}>
+            <View style={styles.rzpContainer}>
+                
+                {/* Razorpay Header */}
+                <View style={styles.rzpHeader}>
+                    <View>
+                        <Text style={styles.rzpHeaderTitle}>Sahayam Trust</Text>
+                        <Text style={styles.rzpAmount}>₹ {task?.paymentAmount}.00</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => !isProcessingPayment && setShowRazorpay(false)}>
+                        <Ionicons name="close" size={28} color="#FFF" />
+                    </TouchableOpacity>
+                </View>
+
+                {/* Contact Info (Simulated) */}
+                <View style={styles.rzpContactBar}>
+                    <Ionicons name="call" size={14} color="#64748B" />
+                    <Text style={styles.rzpContactText}>+91 {currentUser?.phoneNumber || "XXXXXXXXXX"}</Text>
+                </View>
+
+                {/* Payment Methods */}
+                <ScrollView style={styles.rzpBody}>
+                    <Text style={styles.rzpSectionTitle}>Preferred Payment Methods</Text>
+
+                    <TouchableOpacity 
+                        style={[styles.rzpMethod, selectedPaymentMethod === 'UPI' && styles.rzpMethodActive]}
+                        onPress={() => setSelectedPaymentMethod('UPI')}
+                    >
+                        <View style={styles.rzpMethodIconBg}><Ionicons name="phone-portrait" size={20} color="#0B64F0" /></View>
+                        <View style={{flex: 1}}>
+                            <Text style={styles.rzpMethodText}>UPI (GPay, PhonePe, Paytm)</Text>
+                            <Text style={styles.rzpMethodSub}>Pay directly from your bank account</Text>
+                        </View>
+                        {selectedPaymentMethod === 'UPI' && <Ionicons name="checkmark-circle" size={24} color="#0B64F0" />}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                        style={[styles.rzpMethod, selectedPaymentMethod === 'Card' && styles.rzpMethodActive]}
+                        onPress={() => setSelectedPaymentMethod('Card')}
+                    >
+                        <View style={styles.rzpMethodIconBg}><Ionicons name="card" size={20} color="#0B64F0" /></View>
+                        <View style={{flex: 1}}>
+                            <Text style={styles.rzpMethodText}>Credit / Debit Card</Text>
+                            <Text style={styles.rzpMethodSub}>Visa, MasterCard, RuPay</Text>
+                        </View>
+                        {selectedPaymentMethod === 'Card' && <Ionicons name="checkmark-circle" size={24} color="#0B64F0" />}
+                    </TouchableOpacity>
+
+                    <View style={styles.rzpSecurityBadge}>
+                        <Ionicons name="lock-closed" size={14} color="#16A34A" />
+                        <Text style={styles.rzpSecurityText}>100% Secure Payments by Razorpay</Text>
+                    </View>
+                </ScrollView>
+
+                {/* Footer Pay Button */}
+                <View style={styles.rzpFooter}>
+                    <TouchableOpacity 
+                        style={[styles.rzpPayBtn, isProcessingPayment && {opacity: 0.7}]}
+                        onPress={processFakePayment}
+                        disabled={isProcessingPayment}
+                    >
+                        {isProcessingPayment ? (
+                            <ActivityIndicator color="#FFF" size="small" />
+                        ) : (
+                            <Text style={styles.rzpPayBtnText}>Pay ₹{task?.paymentAmount}</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
+            </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -706,4 +905,54 @@ const styles = StyleSheet.create({
   complaintInput: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, minHeight: 100, textAlignVertical: 'top', marginBottom: 16, fontSize: 15, color: '#1E293B' },
   reportSubmitBtn: { backgroundColor: '#475569', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
   reportSubmitText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  paymentCard: { backgroundColor: '#F0FDF4', padding: 24, borderRadius: 24, borderWidth: 1, borderColor: '#BBF7D0', marginBottom: 16, shadowColor: '#16A34A', shadowOpacity: 0.1, shadowOffset: {width: 0, height: 4}, shadowRadius: 12, elevation: 3 },
+  paymentHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  paymentTitle: { fontSize: 20, fontWeight: '900', color: '#166534' },
+  paymentDesc: { fontSize: 14, color: '#15803D', lineHeight: 22, marginBottom: 20 },
+  payBtn: { backgroundColor: '#16A34A', paddingVertical: 18, borderRadius: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
+  payBtnText: { color: '#FFF', fontSize: 17, fontWeight: '800' },
+  
+  paidSuccessBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#DCFCE7', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, marginBottom: 16 },
+  paidSuccessText: { color: '#166534', fontWeight: '700', fontSize: 13 },
+
+  // --- FAKE RAZORPAY STYLES ---
+  rzpOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  rzpContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: Dimensions.get('window').height * 0.75, shadowColor: '#000', shadowOffset: {width:0, height:-4}, shadowOpacity: 0.1, shadowRadius: 10, elevation: 10 },
+  rzpHeader: { backgroundColor: '#0B64F0', padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rzpHeaderTitle: { color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  rzpAmount: { color: '#FFF', fontSize: 28, fontWeight: '900' },
+  rzpContactBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', paddingHorizontal: 24, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', gap: 8 },
+  rzpContactText: { fontSize: 13, color: '#475569', fontWeight: '600' },
+  rzpBody: { padding: 24 },
+  rzpSectionTitle: { fontSize: 12, color: '#94A3B8', fontWeight: '800', marginBottom: 16, textTransform: 'uppercase', letterSpacing: 0.5 },
+  rzpMethod: { flexDirection: 'row', alignItems: 'center', padding: 16, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, marginBottom: 12 },
+  rzpMethodActive: { borderColor: '#0B64F0', backgroundColor: '#EFF6FF' },
+  rzpMethodIconBg: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center', marginRight: 16 },
+  rzpMethodText: { fontSize: 15, fontWeight: '700', color: '#1E293B', marginBottom: 2 },
+  rzpMethodSub: { fontSize: 12, color: '#64748B' },
+  rzpSecurityBadge: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 20, marginBottom: 40 },
+  rzpSecurityText: { fontSize: 12, color: '#16A34A', fontWeight: '600' },
+  rzpFooter: { padding: 24, borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#FFF', paddingBottom: Platform.OS === 'ios' ? 40 : 24 },
+  rzpPayBtn: { backgroundColor: '#0B64F0', paddingVertical: 18, borderRadius: 12, alignItems: 'center' },
+  rzpPayBtnText: { color: '#FFF', fontSize: 18, fontWeight: '800' },
+
+  // --- NAVIGATION BUTTON STYLES ---
+  navigateBtn: { 
+      flexDirection: 'row', 
+      alignItems: 'center', 
+      backgroundColor: '#E0F2FE', // Matches the light blue accent backgrounds in your app
+      paddingHorizontal: 14, 
+      paddingVertical: 10, 
+      borderRadius: 12, 
+      alignSelf: 'flex-start',
+      marginTop: 10,
+      gap: 6,
+      borderWidth: 1,
+      borderColor: '#BAE6FD'
+  },
+  navigateBtnText: { 
+      color: '#007EA7', // Matches your primary brand color
+      fontSize: 13, 
+      fontWeight: '800' 
+  },
 });

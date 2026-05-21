@@ -292,7 +292,7 @@ export default function VolunteerProfile({ navigation }) {
           </View>
         </View>
 
-        <View style={styles.section}>
+        {/* <View style={styles.section}>
           <Text style={styles.sectionTitle}>Preferences</Text>
           <TouchableOpacity style={styles.menuItem}>
             <View style={styles.menuLeft}>
@@ -309,7 +309,7 @@ export default function VolunteerProfile({ navigation }) {
             </View>
             <Ionicons name="chevron-forward" size={20} color="#CFD8DC" />
           </TouchableOpacity>
-        </View>
+        </View> */}
 
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Ionicons name="log-out-outline" size={20} color="#DC2626" />

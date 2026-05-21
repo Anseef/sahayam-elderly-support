@@ -22,52 +22,70 @@ export default function LoginScreen({ navigation }) {
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
-
+ 
   const handleLogin = async () => {
-    if (phone.length < 10 || pin.length < 4) {
-      Alert.alert("Invalid Input", "Please enter a valid phone number and 4-digit PIN.");
+    if (!phone || !pin) {
+      Alert.alert("Missing Info", "Please enter both your phone number and PIN.");
       return;
     }
 
     setLoading(true);
-
     try {
       const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: phone, pin: pin }),
+        body: JSON.stringify({ phoneNumber: phone, pin })
       });
 
       const data = await response.json();
-      setLoading(false);
 
       if (response.ok) {
+        // Save auth data
+        await AsyncStorage.setItem('token', data.token);
         await AsyncStorage.setItem('user', JSON.stringify(data.user));
-        
-        // Normalize role to lowercase to avoid case-sensitivity bugs
-        const userRole = data.user.role?.toLowerCase();
-        const accountStatus = data.user.accountStatus;
 
-        // --- NEW ROUTING LOGIC WITH ADMIN & VERIFICATION CHECK ---
-        if (userRole === 'admin') {
+        // 1. CHECK FOR BANNED USERS
+        if (data.user.accountStatus === 'terminated') {
+            navigation.replace('BannedScreen');
+            return;
+        }
+
+        // 2. CHECK FOR ADMIN
+        if (data.user.role === 'admin') {
             navigation.replace('AdminDashboard');
-        } else if (accountStatus === 'rejected') {
+            return;
+        }
+
+        // 3. CHECK FOR PENDING APPROVAL
+        if (data.user.accountStatus === 'pending') {
+            // Alert.alert(
+            //   "Account Pending", 
+            //   "Your account is currently under review by the admin. Please check back later."
+            // );
+            navigation.replace('PendingApprovalScreen')
+            return; 
+        }
+        // 2. CHECK FOR REJECTED KYC
+        if (data.user.accountStatus === 'rejected') {
             navigation.replace('RejectedScreen');
-        } else if (accountStatus === 'pending') {
-            navigation.replace('PendingApprovalScreen'); 
-        } else if (userRole === 'volunteer') {
+            return;
+        }
+
+        // 4. ROUTE APPROVED USERS TO RESPECTIVE DASHBOARDS
+        if (data.user.role === 'volunteer') {
             navigation.replace('VolunteerDashboard');
         } else {
-            navigation.replace('MainTabs'); // Approved Elderly User
+            navigation.replace('MainTabs');
         }
 
       } else {
-        Alert.alert("Login Failed", data.message || "Invalid credentials");
+        Alert.alert("Login Failed", data.message || "Invalid credentials. Please try again.");
       }
     } catch (error) {
-      setLoading(false);
       console.error("Login Error:", error);
-      Alert.alert("Network Error", "Could not connect to the server.");
+      Alert.alert("Network Error", "Could not connect to the server. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 

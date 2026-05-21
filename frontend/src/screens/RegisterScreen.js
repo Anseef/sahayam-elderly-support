@@ -53,27 +53,17 @@ const handleRegister = async () => {
       if (response.ok) {
         await AsyncStorage.removeItem('user');
 
-        if (role === 'volunteer') {
-          Alert.alert(
-            "Step 1 Complete", 
-            "Your account is created. Please upload your identity documents to proceed.", 
-            [
-              { 
-                text: "Continue", 
-                // Pass the insertedId to the KYC screen
-                onPress: () => navigation.replace('KYCUploadScreen', { userId: data.userId }) 
-              }
-            ]
-          );
-        } else {
-          Alert.alert(
-            "Account Created", 
-            "Welcome to Sahayam! Please log in to continue.", 
-            [
-              { text: "Log In", onPress: () => navigation.replace('Login') }
-            ]
-          );
-        }
+        // ROUTE BOTH USERS TO KYC UPLOAD
+        Alert.alert(
+          "Step 1 Complete", 
+          "Your basic account is created. Please upload your identity document to proceed with verification.", 
+          [
+            { 
+              text: "Continue to Upload", 
+              onPress: () => navigation.replace('KYCUploadScreen', { userId: data.userId, role: role }) 
+            }
+          ]
+        );
       } else {
         Alert.alert("Registration Failed", data.message || "Something went wrong.");
       }

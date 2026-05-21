@@ -11,7 +11,6 @@ import { useFocusEffect } from '@react-navigation/native';
 const { height } = Dimensions.get('window');
 
 export default function AdminDashboard({ navigation }) {
-  // --- NAVIGATION STATES ---
   const [activeTab, setActiveTab] = useState('users'); 
   const [userSubTab, setUserSubTab] = useState('Approvals'); 
   const [taskFilter, setTaskFilter] = useState('All'); 
@@ -19,6 +18,8 @@ export default function AdminDashboard({ navigation }) {
   // --- DATA STATES ---
   const [pendingUsers, setPendingUsers] = useState([]);
   const [activeVolunteers, setActiveVolunteers] = useState([]);
+  const [activeElderly, setActiveElderly] = useState([]); 
+  const [bannedUsers, setBannedUsers] = useState([]); // <-- NEW STATE FOR BANNED USERS
   const [allTasks, setAllTasks] = useState([]);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -41,15 +42,19 @@ export default function AdminDashboard({ navigation }) {
     setLoading(true);
     try {
       const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000';
-      const [pRes, vRes, tRes, rRes] = await Promise.all([
+      const [pRes, vRes, eRes, bRes, tRes, rRes] = await Promise.all([
         fetch(`${baseUrl}/api/admin/pending-users`),
         fetch(`${baseUrl}/api/admin/all-volunteers`),
+        fetch(`${baseUrl}/api/admin/all-elderly`), 
+        fetch(`${baseUrl}/api/admin/banned-users`), // <-- FETCH BANNED USERS
         fetch(`${baseUrl}/api/admin/all-requests`),
         fetch(`${baseUrl}/api/admin/all-reports`)
       ]);
       
       if (pRes.ok) setPendingUsers(await pRes.json());
       if (vRes.ok) setActiveVolunteers(await vRes.json());
+      if (eRes.ok) setActiveElderly(await eRes.json()); 
+      if (bRes.ok) setBannedUsers(await bRes.json()); // <-- SET BANNED USERS
       if (tRes.ok) setAllTasks(await tRes.json());
       if (rRes.ok) setReports(await rRes.json());
     } catch (error) {
@@ -82,18 +87,36 @@ export default function AdminDashboard({ navigation }) {
     } catch (e) { Alert.alert("Error", "Action failed."); }
   };
 
+  // --- MODIFIED: NOW JUST UPDATES STATUS ---
   const handleBanUser = (userId, name) => {
-    Alert.alert("Ban User", `Terminate ${name}'s account? This is permanent.`, [
+    Alert.alert("Ban User", `Suspend ${name}'s account? They will lose access to the app.`, [
       { text: "Cancel", style: "cancel" },
-      { text: "Terminate", style: 'destructive', onPress: async () => {
+      { text: "Suspend", style: 'destructive', onPress: async () => {
           try {
             const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/admin/delete-user/${userId}`, { method: 'DELETE' });
             if (res.ok) { 
-                Alert.alert("Success", "User banned."); 
+                Alert.alert("Success", "User has been suspended."); 
                 setUserModalVisible(false);
                 fetchAdminData(); 
             }
-          } catch (e) { Alert.alert("Error", "Deletion failed."); }
+          } catch (e) { Alert.alert("Error", "Action failed."); }
+      }}
+    ]);
+  };
+
+  // --- NEW: UNBAN USER ACTION ---
+  const handleUnbanUser = (userId, name) => {
+    Alert.alert("Restore Access", `Allow ${name} back into the app?`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Restore", style: 'default', onPress: async () => {
+          try {
+            const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/admin/unban-user/${userId}`, { method: 'PUT' });
+            if (res.ok) { 
+                Alert.alert("Success", "User access restored."); 
+                setUserModalVisible(false);
+                fetchAdminData(); 
+            }
+          } catch (e) { Alert.alert("Error", "Action failed."); }
       }}
     ]);
   };
@@ -103,25 +126,61 @@ export default function AdminDashboard({ navigation }) {
     setTaskModalVisible(true);
   };
 
+  const formatImageUri = (imgString) => {
+    if (!imgString) return null;
+    if (imgString.startsWith('http') || imgString.startsWith('file://') || imgString.startsWith('data:image')) {
+      return imgString;
+    }
+    return `data:image/jpeg;base64,${imgString}`;
+  };
+
   const handleUserPress = (user) => {
       const targetId = String(user._id);
-      const volunteerTasks = allTasks.filter(t => t.status === 'Completed' && t.volunteerId && String(t.volunteerId) === targetId);
-      const completedCount = volunteerTasks.length;
-
-      const ratedTasks = volunteerTasks.filter(t => t.rating && Number(t.rating) > 0);
+      let statCount = 0;
       let avgRating = "0.0";
-      if (ratedTasks.length > 0) {
-          const sum = ratedTasks.reduce((acc, curr) => acc + Number(curr.rating), 0);
-          avgRating = (sum / ratedTasks.length).toFixed(1);
+      let displayRole = "Elderly User";
+
+      if (user.role === 'volunteer') {
+          displayRole = "Verified Volunteer";
+          const volunteerTasks = allTasks.filter(t => t.status === 'Completed' && t.volunteerId && String(t.volunteerId) === targetId);
+          statCount = volunteerTasks.length;
+
+          const ratedTasks = volunteerTasks.filter(t => t.rating && Number(t.rating) > 0);
+          if (ratedTasks.length > 0) {
+              const sum = ratedTasks.reduce((acc, curr) => acc + Number(curr.rating), 0);
+              avgRating = (sum / ratedTasks.length).toFixed(1);
+          }
+      } else {
+          const elderlyTasks = allTasks.filter(t => t.requesterId && String(t.requesterId) === targetId);
+          statCount = elderlyTasks.length;
       }
 
-      setSelectedUser({ ...user, stats: { completedTasks: completedCount, rating: avgRating } });
+      setSelectedUser({ ...user, stats: { count: statCount, rating: avgRating }, displayRole });
       setUserModalVisible(true);
   };
 
-  const handleReportPress = (report) => {
+  const handleReportPress = async (report) => {
       const relatedTask = allTasks.find(t => t._id === report.taskId);
-      setSelectedReport({ ...report, fullTaskDetails: relatedTask });
+      
+      let volunteerDetails = null;
+
+      // If the task has a volunteer assigned, fetch their full profile data
+      if (relatedTask && relatedTask.volunteerId) {
+          try {
+              const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${relatedTask.volunteerId}`);
+              if (res.ok) {
+                  volunteerDetails = await res.json();
+              }
+          } catch (error) {
+              console.log("Could not fetch volunteer details for report modal", error);
+          }
+      }
+
+      setSelectedReport({ 
+          ...report, 
+          fullTaskDetails: relatedTask,
+          volunteerProfile: volunteerDetails // Store the full volunteer object here!
+      });
       setReportModalVisible(true);
   };
 
@@ -207,13 +266,16 @@ export default function AdminDashboard({ navigation }) {
             {/* --- USERS TAB --- */}
             {activeTab === 'users' && (
               <>
-                <View style={styles.subTabRow}>
-                    {['Approvals', 'Volunteer List'].map(st => (
-                      <TouchableOpacity key={st} style={[styles.subTab, userSubTab === st && styles.subTabActive]} onPress={() => setUserSubTab(st)}>
-                        <Text style={[styles.subTabText, userSubTab === st && styles.subTabTextActive]}>{st}</Text>
-                      </TouchableOpacity>
-                    ))}
-                </View>
+                {/* --- ADDED BANNED SUB-TAB --- */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 20}}>
+                    <View style={styles.subTabRow}>
+                        {['Approvals', 'Volunteer List', 'Elderly List', 'Banned'].map(st => (
+                          <TouchableOpacity key={st} style={[styles.subTab, userSubTab === st && styles.subTabActive, st === 'Banned' && userSubTab !== 'Banned' && {backgroundColor: '#FEF2F2'}]} onPress={() => setUserSubTab(st)}>
+                            <Text style={[styles.subTabText, userSubTab === st && styles.subTabTextActive, st === 'Banned' && userSubTab !== 'Banned' && {color: '#DC2626'}]}>{st}</Text>
+                          </TouchableOpacity>
+                        ))}
+                    </View>
+                </ScrollView>
 
                 {userSubTab === 'Approvals' ? (
                   pendingUsers.length > 0 ? pendingUsers.map(user => (
@@ -245,10 +307,10 @@ export default function AdminDashboard({ navigation }) {
                       <Text style={styles.emptyText}>No pending approvals.</Text>
                     </View>
                   )
-                ) : (
+                ) : userSubTab === 'Volunteer List' ? (
                   activeVolunteers.length > 0 ? activeVolunteers.map(v => (
                     <TouchableOpacity key={v._id} style={styles.listCard} onPress={() => handleUserPress(v)}>
-                       <Image source={{ uri: `data:image/jpeg;base64,${v.profileImage}` }} style={styles.smallAvatar} />
+                       <Image source={{ uri: formatImageUri(v.profileImage) }} style={styles.smallAvatar} />
                        <View style={{flex: 1, marginLeft: 12}}>
                           <Text style={styles.listName}>{v.fullName}</Text>
                           <Text style={styles.listSub}>{v.phoneNumber}</Text>
@@ -261,6 +323,52 @@ export default function AdminDashboard({ navigation }) {
                     <View style={styles.emptyState}>
                       <Ionicons name="people-outline" size={40} color="#CBD5E1" />
                       <Text style={styles.emptyText}>No active volunteers found.</Text>
+                    </View>
+                  )
+                ) : userSubTab === 'Elderly List' ? (
+                  activeElderly.length > 0 ? activeElderly.map(e => (
+                    <TouchableOpacity key={e._id} style={styles.listCard} onPress={() => handleUserPress(e)}>
+                       {e.profileImage ? (
+                          <Image source={{ uri: formatImageUri(e.profileImage) }} style={styles.smallAvatar} />
+                       ) : (
+                          <View style={[styles.smallAvatar, {alignItems: 'center', justifyContent: 'center'}]}>
+                             <Text style={{color: '#007EA7', fontWeight: 'bold', fontSize: 18}}>{e.fullName?.charAt(0)}</Text>
+                          </View>
+                       )}
+                       <View style={{flex: 1, marginLeft: 12}}>
+                          <Text style={styles.listName}>{e.fullName}</Text>
+                          <Text style={styles.listSub}>{e.phoneNumber}</Text>
+                       </View>
+                       <View style={{flexDirection: 'row', gap: 10}}>
+                          <TouchableOpacity style={styles.callIconBtn} onPress={() => handleCall(e.phoneNumber)}><Ionicons name="call" size={18} color="#007EA7" /></TouchableOpacity>
+                       </View>
+                    </TouchableOpacity>
+                  )) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="people-outline" size={40} color="#CBD5E1" />
+                      <Text style={styles.emptyText}>No active elderly users found.</Text>
+                    </View>
+                  )
+                ) : (
+                  // --- NEW BANNED LIST RENDERING ---
+                  bannedUsers.length > 0 ? bannedUsers.map(b => (
+                    <TouchableOpacity key={b._id} style={[styles.listCard, {borderLeftWidth: 4, borderLeftColor: '#DC2626'}]} onPress={() => handleUserPress(b)}>
+                       {b.profileImage ? (
+                          <Image source={{ uri: formatImageUri(b.profileImage) }} style={styles.smallAvatar} />
+                       ) : (
+                          <View style={[styles.smallAvatar, {alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEF2F2'}]}>
+                             <Text style={{color: '#DC2626', fontWeight: 'bold', fontSize: 18}}>{b.fullName?.charAt(0)}</Text>
+                          </View>
+                       )}
+                       <View style={{flex: 1, marginLeft: 12}}>
+                          <Text style={styles.listName}>{b.fullName}</Text>
+                          <Text style={[styles.listSub, {color: '#DC2626'}]}>Suspended ({b.role})</Text>
+                       </View>
+                    </TouchableOpacity>
+                  )) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="shield-checkmark-outline" size={40} color="#CBD5E1" />
+                      <Text style={styles.emptyText}>No suspended users.</Text>
                     </View>
                   )
                 )}
@@ -318,7 +426,7 @@ export default function AdminDashboard({ navigation }) {
                       <Text style={styles.reportTitle}>Issue: {report.taskTitle}</Text>
                    </View>
                    <View style={styles.reportQuoteBox}>
-                     <Text style={styles.reportText} numberOfLines={2}>"{report.issue}"</Text>
+                      <Text style={styles.reportText} numberOfLines={2}>"{report.issue}"</Text>
                    </View>
                    <View style={styles.reportFooter}>
                       <Text style={styles.reportByText}>By: {report.reporterName}</Text>
@@ -336,12 +444,12 @@ export default function AdminDashboard({ navigation }) {
         )}
       </ScrollView>
 
-      {/* --- VOLUNTEER DETAILS MODAL --- */}
+      {/* --- USER DETAILS MODAL (VOLUNTEER, ELDERLY, OR BANNED) --- */}
       <Modal visible={isUserModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
             <View style={styles.taskModalContent}>
                 <View style={styles.modalHeader}>
-                    <Text style={styles.modalHeaderTitle}>Volunteer Profile</Text>
+                    <Text style={styles.modalHeaderTitle}>User Profile</Text>
                     <TouchableOpacity onPress={() => setUserModalVisible(false)}>
                         <Ionicons name="close-circle" size={30} color="#94A3B8" />
                     </TouchableOpacity>
@@ -349,29 +457,16 @@ export default function AdminDashboard({ navigation }) {
 
                 <View style={{alignItems: 'center', marginBottom: 20}}>
                     {selectedUser?.profileImage ? (
-                        <Image source={{ uri: `data:image/jpeg;base64,${selectedUser.profileImage}` }} style={{width: 90, height: 90, borderRadius: 45, marginBottom: 12, borderWidth: 3, borderColor: '#E0F2FE'}} />
+                        <Image source={{ uri: formatImageUri(selectedUser.profileImage) }} style={{width: 90, height: 90, borderRadius: 45, marginBottom: 12, borderWidth: 3, borderColor: selectedUser?.accountStatus === 'terminated' ? '#FECACA' : '#E0F2FE'}} />
                     ) : (
-                        <View style={{width: 90, height: 90, borderRadius: 45, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center', marginBottom: 12, borderWidth: 3, borderColor: '#BAE6FD'}}>
-                            <Text style={{fontSize: 32, color: '#007EA7', fontWeight: 'bold'}}>{selectedUser?.fullName?.charAt(0)}</Text>
+                        <View style={{width: 90, height: 90, borderRadius: 45, backgroundColor: selectedUser?.accountStatus === 'terminated' ? '#FEF2F2' : '#E0F2FE', justifyContent: 'center', alignItems: 'center', marginBottom: 12, borderWidth: 3, borderColor: selectedUser?.accountStatus === 'terminated' ? '#FECACA' : '#BAE6FD'}}>
+                            <Text style={{fontSize: 32, color: selectedUser?.accountStatus === 'terminated' ? '#DC2626' : '#007EA7', fontWeight: 'bold'}}>{selectedUser?.fullName?.charAt(0)}</Text>
                         </View>
                     )}
                     <Text style={{fontSize: 22, fontWeight: '800', color: '#1E293B'}}>{selectedUser?.fullName}</Text>
-                    <Text style={{fontSize: 14, color: '#007EA7', fontWeight: '600'}}>Verified Volunteer</Text>
-                </View>
-
-                {/* --- NEW PERFORMANCE STATS --- */}
-                <View style={{flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 16, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: '#E2E8F0'}}>
-                    <View style={{flex: 1, alignItems: 'center', borderRightWidth: 1, borderColor: '#E2E8F0'}}>
-                        <Text style={{fontSize: 24, fontWeight: '900', color: '#007EA7'}}>{selectedUser?.stats?.completedTasks || 0}</Text>
-                        <Text style={{fontSize: 11, color: '#64748B', fontWeight: 'bold', textTransform: 'uppercase', marginTop: 4}}>Tasks Done</Text>
-                    </View>
-                    <View style={{flex: 1, alignItems: 'center'}}>
-                        <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
-                            <Text style={{fontSize: 24, fontWeight: '900', color: '#F59E0B'}}>{selectedUser?.stats?.rating || "0.0"}</Text>
-                            <Ionicons name="star" size={20} color="#F59E0B" />
-                        </View>
-                        <Text style={{fontSize: 11, color: '#64748B', fontWeight: 'bold', textTransform: 'uppercase', marginTop: 4}}>Avg Rating</Text>
-                    </View>
+                    <Text style={{fontSize: 14, color: selectedUser?.accountStatus === 'terminated' ? '#DC2626' : '#007EA7', fontWeight: '600'}}>
+                        {selectedUser?.accountStatus === 'terminated' ? 'SUSPENDED' : selectedUser?.displayRole}
+                    </Text>
                 </View>
 
                 <View style={styles.detailSection}>
@@ -382,17 +477,28 @@ export default function AdminDashboard({ navigation }) {
                 <View style={styles.detailSection}>
                     <Text style={styles.detailLabel}>Identity</Text>
                     <Text style={styles.detailValue}>Aadhaar: {selectedUser?.aadhaarNumber}</Text>
-                    <Text style={{color: '#10B981', fontWeight: 'bold', marginTop: 5}}>✓ Verified Document</Text>
+                    {selectedUser?.accountStatus !== 'terminated' && (
+                        <Text style={{color: '#10B981', fontWeight: 'bold', marginTop: 5}}>✓ Verified Document</Text>
+                    )}
                 </View>
 
                 <View style={{flexDirection: 'row', gap: 12, marginTop: 10}}>
-                    <TouchableOpacity style={[styles.adminActionBtn, {flex: 1, backgroundColor: '#007EA7', flexDirection: 'row', justifyContent: 'center', gap: 8}]} onPress={() => handleCall(selectedUser?.phoneNumber)}>
-                        <Ionicons name="call" size={18} color="#FFF" />
-                        <Text style={styles.adminActionText}>Call Volunteer</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.adminActionBtn, {backgroundColor: '#FEF2F2', paddingHorizontal: 16}]} onPress={() => handleBanUser(selectedUser?._id, selectedUser?.fullName)}>
-                        <Ionicons name="trash" size={22} color="#DC2626" />
-                    </TouchableOpacity>
+                    {selectedUser?.accountStatus === 'terminated' ? (
+                        <TouchableOpacity style={[styles.adminActionBtn, {flex: 1, backgroundColor: '#10B981', flexDirection: 'row', justifyContent: 'center', gap: 8}]} onPress={() => handleUnbanUser(selectedUser?._id, selectedUser?.fullName)}>
+                            <Ionicons name="refresh" size={18} color="#FFF" />
+                            <Text style={styles.adminActionText}>Restore Access</Text>
+                        </TouchableOpacity>
+                    ) : (
+                        <>
+                            <TouchableOpacity style={[styles.adminActionBtn, {flex: 1, backgroundColor: '#007EA7', flexDirection: 'row', justifyContent: 'center', gap: 8}]} onPress={() => handleCall(selectedUser?.phoneNumber)}>
+                                <Ionicons name="call" size={18} color="#FFF" />
+                                <Text style={styles.adminActionText}>Call User</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.adminActionBtn, {backgroundColor: '#FEF2F2', paddingHorizontal: 16}]} onPress={() => handleBanUser(selectedUser?._id, selectedUser?.fullName)}>
+                                <Ionicons name="warning" size={22} color="#DC2626" />
+                            </TouchableOpacity>
+                        </>
+                    )}
                 </View>
             </View>
         </View>
@@ -429,13 +535,29 @@ export default function AdminDashboard({ navigation }) {
                         </View>
                     </View>
 
-                    <View style={styles.detailSection}>
+<View style={styles.detailSection}>
                         <Text style={styles.detailLabel}>Associated Task</Text>
                         <Text style={styles.detailValue}>{selectedReport?.taskTitle}</Text>
                         {selectedReport?.fullTaskDetails && (
-                            <Text style={{color: '#64748B', marginTop: 4}}>
-                                Volunteered by: {selectedReport.fullTaskDetails.volunteerName || 'Unknown'}
-                            </Text>
+                            <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 4}}>
+                                <Text style={{color: '#64748B'}}>Volunteered by: </Text>
+                                
+                                {selectedReport.volunteerProfile ? (
+                                    <TouchableOpacity 
+                                        onPress={() => {
+                                            // Close report modal and open the user profile modal!
+                                            setReportModalVisible(false);
+                                            handleUserPress(selectedReport.volunteerProfile);
+                                        }}
+                                    >
+                                        <Text style={{color: '#007EA7', fontWeight: '800', textDecorationLine: 'underline'}}>
+                                            {selectedReport.fullTaskDetails.volunteerName}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ) : (
+                                    <Text style={{color: '#64748B'}}>{selectedReport.fullTaskDetails.volunteerName || 'Unknown'}</Text>
+                                )}
+                            </View>
                         )}
                     </View>
                 </ScrollView>
@@ -565,10 +687,10 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 12, fontSize: 14, fontWeight: '600' },
 
   // Sub Tabs
-  subTabRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
-  subTab: { flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: '#E0F2FE', alignItems: 'center' },
+  subTabRow: { flexDirection: 'row', gap: 6, paddingRight: 10 },
+  subTab: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, backgroundColor: '#E0F2FE', alignItems: 'center', marginRight: 8 },
   subTabActive: { backgroundColor: '#007EA7' },
-  subTabText: { color: '#007EA7', fontWeight: 'bold', fontSize: 13 },
+  subTabText: { color: '#007EA7', fontWeight: 'bold', fontSize: 12 },
   subTabTextActive: { color: '#FFF' },
 
   // Verification Card
@@ -589,7 +711,7 @@ const styles = StyleSheet.create({
 
   // Volunteer List Card
   listCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 20, marginBottom: 12, shadowColor: '#64748B', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  smallAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E0F2FE', borderWidth: 2, borderColor: '#F0F9FF' },
+  smallAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E0F2FE', borderWidth: 2, borderColor: '#F0F9FF', overflow: 'hidden' },
   listName: { fontWeight: '800', fontSize: 16, color: '#1E293B' },
   listSub: { fontSize: 13, color: '#64748B', marginTop: 2 },
   callIconBtn: { padding: 12, backgroundColor: '#F0F9FF', borderRadius: 12 },

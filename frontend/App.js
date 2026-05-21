@@ -19,19 +19,17 @@ import EditElderlyProfile from './src/screens/EditElderlyProfile';
 import AddServiceScreen from './src/screens/AddServiceScreen';
 
 // Volunteer Screens
-import VolunteerDashboardScreen from './src/screens/VolunteerDashboard'; // Renamed import to avoid conflict
+import VolunteerDashboardScreen from './src/screens/VolunteerDashboard'; 
 import VolunteerProfile from './src/screens/VolunteerProfile';
 import PublicProfileScreen from './src/screens/PublicProfileScreen';
 import EditVolunteerProfile from './src/screens/EditVolunteerProfile';
 import VolunteerEmergencyScreen from './src/screens/VolunteerEmergencyScreen';
 
-
 import AdminDashboard from './src/screens/AdminDashboard';
 import PendingApprovalScreen from './src/screens/PendingApprovalScreen';
-import RejectedScreen from './src/screens/RrejectedScreen';
+import RejectedScreen from './src/screens/RejectedScreen';
 import KYCUploadScreen from './src/screens/KYCUploadScreen';
-
-
+import BannedScreen from './src/screens/BannedScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -45,8 +43,11 @@ function MainTabs() {
         tabBarStyle: styles.tabBar,
         tabBarActiveTintColor: route.name === 'Emergency' ? '#D32F2F' : '#007EA7',
         tabBarInactiveTintColor: '#90A4AE',
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '600', marginBottom: 5 },
-        tabBarIconStyle: { marginTop: 5 }
+        tabBarItemStyle: {
+          justifyContent: 'center',
+          alignItems: 'center',
+        },
+        tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
       })}
     >
       <Tab.Screen 
@@ -85,8 +86,11 @@ function VolunteerTabs() {
         tabBarStyle: styles.tabBar,
         tabBarActiveTintColor: '#007EA7',
         tabBarInactiveTintColor: '#94A3B8',
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '600', marginBottom: 5 },
-        tabBarIconStyle: { marginTop: 5 }
+        tabBarItemStyle: {
+          justifyContent: 'center',
+          alignItems: 'center',
+        },
+        tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
       }}
     >
       <Tab.Screen 
@@ -121,6 +125,7 @@ export default function App() {
         <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name='PendingApprovalScreen' component={PendingApprovalScreen} />
         <Stack.Screen name='RejectedScreen' component={RejectedScreen} />
+        <Stack.Screen name='BannedScreen' component={BannedScreen} />
 
         {/* Elderly Flow */}
         <Stack.Screen name="MainTabs" component={MainTabs} />
@@ -130,7 +135,6 @@ export default function App() {
         <Stack.Screen name="EditElderlyProfile" component={EditElderlyProfile} />
 
         {/* Volunteer Flow */}
-        {/* We map "VolunteerDashboard" to the Tabs so Login logic works automatically */}
         <Stack.Screen name="VolunteerDashboard" component={VolunteerTabs} />
         <Stack.Screen name="VolunteerProfile" component={VolunteerProfile} />
         <Stack.Screen name="PublicProfileScreen" component={PublicProfileScreen} />
@@ -156,9 +160,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   tabBar: { 
-    height: 65, 
-    paddingBottom: 10, 
-    paddingTop: 10,
+    height: 58, 
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',

@@ -22,6 +22,8 @@ export default function ElderlyDashboard({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [currentLabel, setCurrentLabel] = useState("Home");
+  const [currentIcon, setCurrentIcon] = useState("home");
 
   // --- FETCH DATA FUNCTION ---
   const fetchData = async () => {
@@ -29,13 +31,30 @@ export default function ElderlyDashboard({ navigation }) {
       const storedUser = await AsyncStorage.getItem('user');
       if (!storedUser) return;
       const parsedUser = JSON.parse(storedUser);
-      const userId = parsedUser.id || parsedUser._id; // Handle both id formats
+      const userId = parsedUser.id || parsedUser._id; 
+      
       const profileUrl = `${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.5:5000'}/api/user/profile/${userId}`;
       const profileResponse = await fetch(profileUrl);
       const profileData = await profileResponse.json();
 
       if (profileResponse.ok) {
         setCurrentUser(profileData);
+        
+        const activeLocation = profileData.location;
+        const savedList = profileData.savedAddresses || [];
+        const matchingAddress = savedList.find(addr => addr.address === activeLocation);
+        
+        if (matchingAddress) {
+            setCurrentLabel(matchingAddress.label);
+            setCurrentIcon(matchingAddress.icon || "location");
+        } else if (activeLocation) {
+            setCurrentLabel("Current Location"); 
+            setCurrentIcon("location");
+        } else {
+            setCurrentLabel("Home"); 
+            setCurrentIcon("home");
+        }
+
       } else {
         setCurrentUser(parsedUser);
       }
@@ -151,17 +170,22 @@ export default function ElderlyDashboard({ navigation }) {
       
       {/* HEADER */}
       <View style={styles.header}>
-        <View style={styles.addressSection}>
+      <View style={styles.addressSection}>
             <TouchableOpacity
               style={styles.addressTitleRow}
               onPress={() => navigation.navigate('LocationSelectScreen')}
             >
-              <Ionicons name="home" size={18} color="#007EA7" />
-              <Text style={styles.addressLabel}>Home</Text>
+              {/* --- DYNAMIC ICON LOGIC --- */}
+              {currentIcon === 'home' || currentIcon === 'location' || currentIcon === 'briefcase'? (
+                <Ionicons name={currentIcon} size={18} color="#007EA7" />
+              ) : (
+                <FontAwesome5 name={currentIcon} size={16} color="#007EA7" />
+              )}
+              
+              <Text style={styles.addressLabel}>{currentLabel}</Text>
               <Ionicons name="chevron-down" size={16} color="#546E7A" />
             </TouchableOpacity>
             
-            {/* Display User Name or Location */}
             <Text style={styles.addressText} numberOfLines={1}>
               {currentUser?.location || currentUser?.name || "No Location"}
             </Text>

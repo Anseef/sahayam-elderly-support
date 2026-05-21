@@ -11,7 +11,6 @@ router.post('/create_request', async (req, res) => {
   try {
     const db = getDb();
     const payload = req.body;
-
     if (!payload.requesterId || !payload.category) {
       return res.status(400).json({ message: 'Missing required fields.' });
     }
@@ -193,28 +192,56 @@ router.put('/complete/:requestId', async (req, res) => {
   }
 });
 
-// --- 9. DROP TASK (Volunteer) ---
+// --- DROP TASK (WITH MONTHLY LIMIT) ---
 router.put('/drop/:id', async (req, res) => {
   try {
     const db = getDb();
-    const { id } = req.params;
+    const taskId = req.params.id;
+    const { volunteerId } = req.body;
 
-    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid request ID' });
+    if (!ObjectId.isValid(taskId) || !volunteerId || !ObjectId.isValid(volunteerId)) {
+      return res.status(400).json({ message: 'Valid Task ID and Volunteer ID are required' });
+    }
 
-    const result = await db.collection('requests').updateOne(
-      { _id: new ObjectId(id) },
+    // Get the current month in YYYY-MM format (e.g., "2026-03")
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
+    // 1. Fetch the volunteer to check their drop history
+    const volunteer = await db.collection('users').findOne({ _id: new ObjectId(volunteerId) });
+    if (!volunteer) return res.status(404).json({ message: 'Volunteer not found' });
+
+    let dropCount = volunteer.monthlyDropCount || 0;
+    let lastDropMonth = volunteer.dropMonth || "";
+
+    // Reset the count if it is a brand new month
+    if (lastDropMonth !== currentMonth) {
+      dropCount = 0;
+    }
+
+    // 2. Enforce the limit of 10 drops per month
+    if (dropCount >= 5) {
+      return res.status(403).json({ 
+        message: 'Monthly limit reached (10/10). You cannot drop any more tasks this month.' 
+      });
+    }
+
+    // 3. Proceed to drop the task
+    await db.collection('requests').updateOne(
+      { _id: new ObjectId(taskId) },
       { 
-        $set: { 
-          status: 'Pending',
-          volunteerId: null,
-          volunteerName: null,
-          volunteerImage: null 
-        } 
+        $set: { status: 'Pending', volunteerId: null, volunteerName: null, volunteerImage: null },
+        $push: { dropHistory: { volunteerId: volunteerId, droppedAt: new Date() } } // Optional: Keep a log of who dropped it
       }
     );
 
-    if (result.matchedCount === 0) return res.status(404).json({ message: 'Request not found' });
-    res.json({ message: 'Task dropped and returned to open feed.' });
+    // 4. Increment the volunteer's drop count in their profile
+    await db.collection('users').updateOne(
+      { _id: new ObjectId(volunteerId) },
+      { $set: { monthlyDropCount: dropCount + 1, dropMonth: currentMonth } }
+    );
+
+    res.json({ message: 'Task dropped successfully', dropCount: dropCount + 1 });
+
   } catch (err) {
     console.error("Drop Task Error:", err);
     res.status(500).json({ message: 'Server Error' });
@@ -272,6 +299,27 @@ router.post('/report/:taskId', async (req, res) => {
     res.status(201).json({ message: 'Report submitted successfully' });
   } catch (err) {
     console.error("Report Error:", err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// --- MARK TASK AS PAID ---
+router.put('/pay/:id', async (req, res) => {
+  try {
+    const db = getDb();
+    const taskId = req.params.id;
+
+    if (!ObjectId.isValid(taskId)) return res.status(400).json({ message: 'Invalid ID' });
+
+    const result = await db.collection('requests').updateOne(
+      { _id: new ObjectId(taskId) },
+      { $set: { paymentStatus: 'Paid', paidAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'Task not found' });
+
+    res.json({ message: 'Payment successful!' });
+  } catch (err) {
     res.status(500).json({ message: 'Server Error' });
   }
 });
